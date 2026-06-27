@@ -1,0 +1,11 @@
+{
+  "judgement_weight": 0.35,
+  "rationale_weight": 0.25,
+  "citation_weight": 0.2,
+  "format_weight": 0.1,
+  "generality_weight": 0.1,
+  "unsupported_claim_penalty": 0.2,
+  "leakage_penalty": 0.15,
+  "regression_penalty": 0.1,
+  "cost_latency_penalty": 0.05
+}

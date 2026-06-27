@@ -1,0 +1,7 @@
+evidence_id: mm_billing_invoice
+page: 1
+section: 請求明細
+税抜金額: 120000
+消費税: 12000
+税込合計: 132000
+備考: 追加作業を含む。

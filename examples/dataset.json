@@ -1,0 +1,76 @@
+{
+  "dataset_id": "sample_poc_tuning_dataset",
+  "metadata": {
+    "description": "ローカルで探索ループを検証するための最小サンプルデータセット"
+  },
+  "cases": [
+    {
+      "case_id": "case_001",
+      "split": "train",
+      "procedure_csv_path": "procedure_base.csv",
+      "evidence_bundle_path": "evidence/case_001",
+      "expected_output": {
+        "judgement": "適合",
+        "required_claim_keywords": ["住所", "一致"],
+        "citations": [{"evidence_id": "doc_identity_001", "page": 1, "claim": "住所一致"}]
+      },
+      "metadata": {
+        "domain": "本人確認",
+        "procedure_family": "住所照合",
+        "difficulty": "easy",
+        "required_capability": "evidence_grounding"
+      }
+    },
+    {
+      "case_id": "case_002",
+      "split": "train",
+      "procedure_csv_path": "procedure_base.csv",
+      "evidence_bundle_path": "evidence/case_002",
+      "expected_output": {
+        "judgement": "適合",
+        "required_claim_keywords": ["金額", "一致"],
+        "citations": [{"evidence_id": "doc_invoice_001", "page": 2, "claim": "金額一致"}]
+      },
+      "metadata": {
+        "domain": "請求審査",
+        "procedure_family": "金額照合",
+        "difficulty": "medium",
+        "required_capability": "citation_precision"
+      }
+    },
+    {
+      "case_id": "case_003",
+      "split": "validation",
+      "procedure_csv_path": "procedure_base.csv",
+      "evidence_bundle_path": "evidence/case_003",
+      "expected_output": {
+        "judgement": "判断不能",
+        "required_claim_keywords": ["発行日", "不足"],
+        "citations": [{"evidence_id": "doc_employment_001", "page": 3, "claim": "発行日不足"}]
+      },
+      "metadata": {
+        "domain": "雇用確認",
+        "procedure_family": "証跡不足",
+        "difficulty": "medium",
+        "required_capability": "abstention"
+      }
+    },
+    {
+      "case_id": "case_004",
+      "split": "holdout",
+      "procedure_csv_path": "procedure_base.csv",
+      "evidence_bundle_path": "evidence/case_004",
+      "expected_output": {
+        "judgement": "適合",
+        "required_claim_keywords": ["必須条項", "例外条件"],
+        "citations": [{"evidence_id": "doc_contract_001", "page": 4, "claim": "条件確認"}]
+      },
+      "metadata": {
+        "domain": "契約審査",
+        "procedure_family": "条件分岐",
+        "difficulty": "medium",
+        "required_capability": "condition_check"
+      }
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+evidence_id: mm_identity_application
+image region: 中央の申請者情報欄
+申請者名: 佐藤理央
+連絡先住所: 東京都品川区東品川2-2-24
+受付メモ: マンション名は未入力。本人確認票と番地まで一致。

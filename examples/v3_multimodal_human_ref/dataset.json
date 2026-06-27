@@ -1,0 +1,121 @@
+{
+  "dataset_id": "v3_multimodal_human_reference_dataset",
+  "metadata": {
+    "description": "v3検証用。自然言語手続、PDF/画像証跡、非構造の人間実施結果から、ケース横断で追加指示を探索する。",
+    "source": "scripts/create_v3_multimodal_fixture.py"
+  },
+  "cases": [
+    {
+      "case_id": "case_mm_001",
+      "split": "train",
+      "procedure_csv_path": "procedures/case_mm_001_procedure.txt",
+      "evidence_bundle_path": "evidence/case_mm_001",
+      "human_result_text": "このケースは適合と判断しました。まず identity_summary.pdf の1ページ目にある「本人確認記録」欄で、氏名が佐藤理央、住所が東京都品川区東品川2-2-24、確認日が2026年5月31日と読めます。次に application_capture.bmp のOCR欄では、申請者名が同じ佐藤理央で、連絡先住所も東京都品川区東品川2-2-24になっていました。手続は申請内容と証跡の突合、必須項目の不足確認、判断根拠の記録を求めているため、氏名と住所の一致が主要な確認点です。PDF下部の備考には「転送不可郵便で到達確認済」とあり、住所が単なる自己申告だけではない点も補強材料になります。画像側にある受付メモではマンション名が省略されていますが、番地まで一致しており、PDF側にも部屋番号は任意項目と記載されています。確認日は古すぎず、手続上の有効期間内に収まるため、日付を理由に保留する必要もありません。また、別名義や旧住所を示す反対証跡は添付ファイル内に見当たりません。このため住所不一致とは扱わず、確認済みの証跡に基づいて適合とします。根拠はPDF上段の本人確認記録と、画像中央の申請者情報欄です。",
+      "expected_output": {
+        "judgement": "適合",
+        "required_claim_keywords": [
+          "氏名",
+          "住所",
+          "一致"
+        ],
+        "citations": [
+          {
+            "evidence_id": "mm_identity_summary",
+            "page": 1,
+            "claim": "本人確認記録の氏名住所"
+          }
+        ]
+      },
+      "metadata": {
+        "domain": "本人確認",
+        "procedure_family": "本人属性照合",
+        "difficulty": "medium",
+        "required_capability": "evidence_grounding"
+      }
+    },
+    {
+      "case_id": "case_mm_002",
+      "split": "train",
+      "procedure_csv_path": "procedures/case_mm_002_procedure.txt",
+      "evidence_bundle_path": "evidence/case_mm_002",
+      "human_result_text": "このケースは不適合としました。billing_invoice.pdf の1ページ目、請求明細の合計欄には税抜120,000円、消費税12,000円、税込132,000円とあり、支払依頼額は132,000円です。一方で order_screen.bmp の右上の発注情報では、承認済み発注額が123,000円、許容差額は1,000円までと読めます。手続は金額、日付、承認状態を照合して差異を記録する内容なので、請求書が発注額を9,000円超過している点は単なる丸め誤差ではありません。PDFの備考に「追加作業を含む」とありますが、画像側の発注画面には追加作業の変更承認番号が空欄で、承認済み金額を増やす根拠にはできません。請求日と発注日は同じ月内で、承認状態も発注側は承認済みですが、最終的な支払可否では金額不一致が重大です。追加作業を認めるには変更承認または別発注が必要ですが、今回の証跡にはその箇所が見当たりません。税抜金額だけを見ると発注額に近く見えるものの、手続では支払依頼額を比較するため税込合計を採用します。これは重要です。根拠はPDF下部の合計欄と、画像右上の発注額・許容差額欄を見比べた結果です。",
+      "expected_output": {
+        "judgement": "不適合",
+        "required_claim_keywords": [
+          "金額",
+          "不一致",
+          "132000"
+        ],
+        "citations": [
+          {
+            "evidence_id": "mm_billing_invoice",
+            "page": 1,
+            "claim": "請求額132000円"
+          }
+        ]
+      },
+      "metadata": {
+        "domain": "請求審査",
+        "procedure_family": "金額照合",
+        "difficulty": "hard",
+        "required_capability": "citation_precision"
+      }
+    },
+    {
+      "case_id": "case_mm_003",
+      "split": "validation",
+      "procedure_csv_path": "procedures/case_mm_003_procedure.txt",
+      "evidence_bundle_path": "evidence/case_mm_003",
+      "human_result_text": "このケースは判断不能です。employment_certificate.pdf の1ページ目には、勤務先が北浜製作所、雇用区分が契約社員、在籍状態が在籍中とあります。ただし、手続で確認対象になっている発行日がPDFの右上欄では空欄です。applicant_note.bmp の左下にある申告メモでは「2026年4月以降も勤務継続」と書かれていますが、これは本人申告であり、証明書の発行日を補う証跡ではありません。手続は雇用区分と在籍状態に加え、証跡の有効期間を確認するとしているため、発行日がないまま現在性を判断するのは危険です。PDF本文に押印らしき表示はありますが、OCR欄にも発行日がなく、画像側にも会社発行の別資料はありません。契約社員であること自体は不適合理由ではないものの、証跡の発行時点が特定できないため、適合にも不適合にも寄せず、追加証跡が必要な判断不能とします。仮に在籍中という文言だけを見ると適合に寄りやすいですが、今回は有効期間確認が手続の独立した条件です。古い証明書の再利用可能性を排除できない点も重視しました。根拠はPDF右上の発行日空欄と、画像左下の本人申告メモの性質です。",
+      "expected_output": {
+        "judgement": "判断不能",
+        "required_claim_keywords": [
+          "発行日",
+          "空欄",
+          "判断不能"
+        ],
+        "citations": [
+          {
+            "evidence_id": "mm_employment_certificate",
+            "page": 1,
+            "claim": "発行日空欄"
+          }
+        ]
+      },
+      "metadata": {
+        "domain": "雇用確認",
+        "procedure_family": "証跡不足判定",
+        "difficulty": "hard",
+        "required_capability": "abstention"
+      }
+    },
+    {
+      "case_id": "case_mm_004",
+      "split": "holdout",
+      "procedure_csv_path": "procedures/case_mm_004_procedure.txt",
+      "evidence_bundle_path": "evidence/case_mm_004",
+      "human_result_text": "このケースは適合と判断しました。contract_terms.pdf の2ページ目の例外条件欄には「月次売上が300万円以上、かつ解約通知が30日前までに提出されている場合、通常の最低利用期間を適用しない」とあります。sales_dashboard.bmp の中央の月次集計では対象月の売上が3,180,000円で、notice_scan.pdf の1ページ目には解約通知の受領日が2026年5月1日、終了希望日が2026年6月15日と読めます。30日前条件は45日前に相当するので満たしています。手続は原則条件だけでなく例外条件の成立有無を確認することを求めており、最低利用期間だけを見ると不適合に見えますが、例外条件まで読むと適合です。画像の売上は速報値ではなく「確定」と表示され、PDFの通知書にも受付印があります。契約条項、売上画面、通知書の三つがそろって初めて例外成立といえるため、一つだけを根拠にした判断では不十分です。売上額は300万円を18万円上回っており、境界値の読み違いでもありません。したがって、根拠は契約条項2ページの例外条件、画像中央の確定売上、通知書PDFの受領日と終了希望日の組み合わせです。",
+      "expected_output": {
+        "judgement": "適合",
+        "required_claim_keywords": [
+          "例外条件",
+          "売上",
+          "通知"
+        ],
+        "citations": [
+          {
+            "evidence_id": "mm_contract_terms",
+            "page": 2,
+            "claim": "例外条件"
+          }
+        ]
+      },
+      "metadata": {
+        "domain": "契約審査",
+        "procedure_family": "条件分岐判定",
+        "difficulty": "hard",
+        "required_capability": "condition_check"
+      }
+    }
+  ]
+}
