@@ -1,0 +1,41 @@
+{
+  "db_path": ".tmp/poc_automation.sqlite",
+  "artifact_dir": ".tmp/artifacts",
+  "agent": "heuristic",
+  "runner": "mock",
+  "search_policy": {
+    "iterations": 3,
+    "candidates_per_iteration": 8,
+    "cheap_sample_size": 20,
+    "validation_sample_size": 50,
+    "holdout_sample_size": 50,
+    "beam_width": 4,
+    "max_instruction_chars": 400,
+    "min_delta_for_positive_label": 0.03,
+    "max_regression_rate_for_promotion": 0.02,
+    "random_seed": 42
+  },
+  "evaluator_policy": {
+    "judgement_weight": 0.35,
+    "rationale_weight": 0.25,
+    "citation_weight": 0.2,
+    "format_weight": 0.1,
+    "generality_weight": 0.1,
+    "unsupported_claim_penalty": 0.2,
+    "leakage_penalty": 0.15,
+    "regression_penalty": 0.1,
+    "cost_latency_penalty": 0.05
+  },
+  "target_agent": {
+    "provider": "openrouter",
+    "base_url": "https://openrouter.ai/api/v1",
+    "model": "qwen/qwen3-max",
+    "temperature": 0,
+    "max_tokens": 2048,
+    "max_retries": 2,
+    "timeout_seconds": 120,
+    "app_title": "PoC Automation",
+    "max_csv_chars": 12000,
+    "max_evidence_chars": 30000
+  }
+}

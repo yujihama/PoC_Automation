@@ -1,0 +1,4 @@
+evidence_id: mm_applicant_note
+image region: 左下の申告メモ
+本人申告: 2026年4月以降も勤務継続
+添付資料: 会社発行の補足資料なし

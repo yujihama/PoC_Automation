@@ -1,0 +1,7 @@
+evidence_id: mm_employment_certificate
+page: 1
+section: 在籍証明書
+勤務先: 北浜製作所
+雇用区分: 契約社員
+在籍状態: 在籍中
+発行日: 空欄

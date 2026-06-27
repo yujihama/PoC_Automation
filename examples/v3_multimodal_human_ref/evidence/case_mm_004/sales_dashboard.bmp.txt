@@ -1,0 +1,4 @@
+evidence_id: mm_sales_dashboard
+image region: 中央の月次集計
+対象月売上: 3180000
+集計状態: 確定

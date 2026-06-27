@@ -1,0 +1,6 @@
+evidence_id: mm_order_screen
+image region: 右上の発注情報
+承認済み発注額: 123000
+許容差額: 1000
+承認状態: 承認済み
+変更承認番号: 空欄

@@ -1,0 +1,6 @@
+evidence_id: mm_notice_scan
+page: 1
+section: 解約通知書
+受領日: 2026-05-01
+終了希望日: 2026-06-15
+受付印: あり

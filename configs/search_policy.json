@@ -1,0 +1,12 @@
+{
+  "iterations": 3,
+  "candidates_per_iteration": 8,
+  "cheap_sample_size": 20,
+  "validation_sample_size": 50,
+  "holdout_sample_size": 50,
+  "beam_width": 4,
+  "max_instruction_chars": 400,
+  "min_delta_for_positive_label": 0.03,
+  "max_regression_rate_for_promotion": 0.02,
+  "random_seed": 42
+}
