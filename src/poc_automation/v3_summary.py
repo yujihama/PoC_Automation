@@ -46,6 +46,9 @@ def export_v3_evaluation_summary(
     lines.append(f"- case run: {stats['case_runs']}件（失敗 {stats['failed_case_runs']}件）")
     lines.append(f"- 評価結果: {stats['evaluation_results']}件")
     lines.append(f"- 探索agentのドラフト試行: {stats['trial_rows']}件")
+    lines.append(f"- agent_trial_rounds: {stats['agent_trial_rounds']}")
+    lines.append(f"- replicated_trial_rows: {stats['replicated_trial_rows']}")
+    lines.append(f"- stable_replicated_trial_rows: {stats['stable_replicated_trial_rows']}")
     if stats["trial_rows"]:
         lines.append(
             f"- ドラフト試行あたりの評価ケース数: min {stats['trial_min_cases']} / "
@@ -145,6 +148,7 @@ def _load_registry_stats(registry: ExperimentRegistry) -> dict[str, object]:
             ).fetchone()
             overall_total_score = row["total_score"]
         trial_min_cases = trial_max_cases = trial_avg_cases = None
+        agent_trial_rounds = replicated_trial_rows = stable_replicated_trial_rows = 0
         if "agent_trial_observations" in tables:
             row = conn.execute(
                 """
@@ -158,6 +162,18 @@ def _load_registry_stats(registry: ExperimentRegistry) -> dict[str, object]:
             trial_min_cases = row["min_cases"]
             trial_max_cases = row["max_cases"]
             trial_avg_cases = row["avg_cases"]
+            row = conn.execute(
+                """
+                select
+                  coalesce(max(search_iteration), 0) as trial_rounds,
+                  sum(case when json_extract(summary_json, '$.replicate_summary.replicate_count') is not null then 1 else 0 end) as replicated_rows,
+                  sum(case when json_extract(summary_json, '$.replicate_summary.stable') = 1 then 1 else 0 end) as stable_rows
+                from agent_trial_observations
+                """
+            ).fetchone()
+            agent_trial_rounds = int(row["trial_rounds"] or 0)
+            replicated_trial_rows = int(row["replicated_rows"] or 0)
+            stable_replicated_trial_rows = int(row["stable_rows"] or 0)
         top_effects: list[dict[str, object]] = []
         if "tuning_effects" in tables:
             for row in conn.execute(
@@ -178,6 +194,9 @@ def _load_registry_stats(registry: ExperimentRegistry) -> dict[str, object]:
             "failed_case_runs": failed_case_runs,
             "evaluation_results": count("evaluation_results"),
             "trial_rows": count("agent_trial_observations"),
+            "agent_trial_rounds": agent_trial_rounds,
+            "replicated_trial_rows": replicated_trial_rows,
+            "stable_replicated_trial_rows": stable_replicated_trial_rows,
             "trial_min_cases": trial_min_cases,
             "trial_max_cases": trial_max_cases,
             "trial_avg_cases": trial_avg_cases,

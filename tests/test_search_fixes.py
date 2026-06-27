@@ -257,3 +257,74 @@ def test_human_reference_agent_recovers_candidate_from_trials_when_final_json_is
     assert candidates[0].generated_by == "deepagent-human-ref"
     assert candidates[0].patch.text.startswith("Compare all available evidence")
     assert candidates[0].labels["source_trial_ids"] == ["trial_0002_02_ccccdddd"]
+
+
+class FakeUnstableTrialContext(FakeHumanReferenceContext):
+    def list_previous_trials(self):
+        return [
+            {
+                "trial_id": "trial_0003_01_badbad00",
+                "instruction": "Unstable but initially attractive instruction.",
+                "hypothesis": "Should be skipped after replicate checks.",
+                "case_ids": ["case_a", "case_b"],
+                "summary": {
+                    "delta_mean": 0.50,
+                    "total_score_mean": 0.95,
+                    "regression_count": 0,
+                    "replicate_summary": {
+                        "replicate_count": 3,
+                        "stable": False,
+                        "delta_mean_min": -0.20,
+                        "worst_case_delta": -0.60,
+                    },
+                },
+                "status": "succeeded",
+            },
+            {
+                "trial_id": "trial_0003_02_good1111",
+                "instruction": "Stable instruction chosen after replicate checks.",
+                "hypothesis": "Should be promoted to final candidate.",
+                "case_ids": ["case_a", "case_b"],
+                "summary": {
+                    "delta_mean": 0.10,
+                    "total_score_mean": 0.82,
+                    "regression_count": 0,
+                    "replicate_summary": {
+                        "replicate_count": 3,
+                        "stable": True,
+                        "delta_mean_min": 0.05,
+                        "worst_case_delta": 0.0,
+                    },
+                },
+                "status": "succeeded",
+            },
+        ]
+
+
+class FakeUnstableTrialHumanReferenceDeepAgent(HumanReferenceDeepAgentTuningAgent):
+    def _invoke_human_reference_agent(self, **kwargs):
+        return {
+            "messages": [
+                {
+                    "content": (
+                        "Best trial is trial_0003_01_badbad00, but the final answer is not JSON."
+                    )
+                }
+            ]
+        }
+
+
+def test_human_reference_agent_skips_unstable_replicated_trial_when_recovering_candidate():
+    agent = FakeUnstableTrialHumanReferenceDeepAgent()
+    agent.set_runtime_context(FakeUnstableTrialContext())
+
+    candidates = agent.propose_candidates(
+        failures=[],
+        base_csv_id="procedure_base",
+        row_selector={"step_id": "s1"},
+        max_candidates=1,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].patch.text.startswith("Stable instruction")
+    assert candidates[0].labels["source_trial_ids"] == ["trial_0003_02_good1111"]

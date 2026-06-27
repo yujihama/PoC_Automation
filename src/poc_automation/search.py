@@ -999,13 +999,60 @@ class HumanReferenceSearchContext:
             )
             return {"status": "rejected", "trial_id": trial_id, "validation_issues": to_jsonable(validation.issues)}
 
+        baseline_by_case = self.orchestrator._baseline_case_metric_scores()
+        first_run = self._evaluate_trial_candidate_once(candidate, cases, baseline_by_case, replicate_index=1)
+        summary = dict(first_run["summary"])
+        case_results = list(first_run["case_results"])
+        replicate_runs: list[dict[str, object]] = [first_run]
+        if self._should_replicate_trial(summary):
+            for replicate_index in range(2, self.orchestrator.policy.agent_trial_replicates + 1):
+                replicate_runs.append(
+                    self._evaluate_trial_candidate_once(candidate, cases, baseline_by_case, replicate_index=replicate_index)
+                )
+            summary["replicate_summary"] = self._summarize_trial_replicates(replicate_runs)
+        trial_id = self.orchestrator.registry.save_agent_trial_observation(
+            search_iteration=self.iteration,
+            draft_index=draft_index,
+            agent_name="deepagent-human-ref",
+            tool_name="evaluate_draft_instruction",
+            instruction_text=instruction,
+            hypothesis=hypothesis,
+            case_ids=[case.case_id for case in cases],
+            splits=sorted({case.split.value for case in cases}),
+            summary=summary,
+            case_results=case_results,
+            status="succeeded",
+        )
+        payload = {
+            "status": "succeeded",
+            "trial_id": trial_id,
+            "instruction": instruction,
+            "hypothesis": hypothesis,
+            "summary": summary,
+            "case_results": case_results,
+            "replicate_runs": replicate_runs if len(replicate_runs) > 1 else [],
+        }
+        self.orchestrator.artifacts.write_json(
+            "agent_observations",
+            f"iteration_{self.iteration:04d}_{trial_id}.json",
+            payload,
+        )
+        return payload
+
+    def _evaluate_trial_candidate_once(
+        self,
+        candidate: TuningCandidate,
+        cases: list[Case],
+        baseline_by_case: dict[str, dict[str, float]],
+        *,
+        replicate_index: int,
+    ) -> dict[str, object]:
         case_results: list[dict[str, object]] = []
         scores: list[float] = []
         deltas: list[float] = []
         regression_count = 0
         positive_count = 0
         negative_count = 0
-        baseline_by_case = self.orchestrator._baseline_case_metric_scores()
         total_latency_ms = 0
         usage: dict[str, int] = {}
         for case_execution in self.orchestrator._run_cases_for_candidate(candidate, cases):
@@ -1029,6 +1076,7 @@ class HumanReferenceSearchContext:
                 regression_count += 1
             case_results.append(
                 {
+                    "replicate_index": replicate_index,
                     "case_id": case.case_id,
                     "split": case.split.value,
                     "status": result.status,
@@ -1043,42 +1091,65 @@ class HumanReferenceSearchContext:
                 }
             )
         summary = {
+            "replicate_index": replicate_index,
             "case_count": len(cases),
             "total_score_mean": sum(scores) / len(scores) if scores else 0.0,
             "delta_mean": sum(deltas) / len(deltas) if deltas else 0.0,
+            "delta_min": min(deltas) if deltas else 0.0,
+            "delta_max": max(deltas) if deltas else 0.0,
             "positive_count": positive_count,
             "negative_count": negative_count,
             "regression_count": regression_count,
             "latency_ms": total_latency_ms,
             "usage": usage,
         }
-        trial_id = self.orchestrator.registry.save_agent_trial_observation(
-            search_iteration=self.iteration,
-            draft_index=draft_index,
-            agent_name="deepagent-human-ref",
-            tool_name="evaluate_draft_instruction",
-            instruction_text=instruction,
-            hypothesis=hypothesis,
-            case_ids=[case.case_id for case in cases],
-            splits=sorted({case.split.value for case in cases}),
-            summary=summary,
-            case_results=case_results,
-            status="succeeded",
+        return {"replicate_index": replicate_index, "summary": summary, "case_results": case_results}
+
+    def _should_replicate_trial(self, summary: dict[str, object]) -> bool:
+        if self.orchestrator.policy.agent_trial_replicates <= 1:
+            return False
+        return (
+            float(summary.get("delta_mean", 0.0) or 0.0)
+            >= self.orchestrator.policy.agent_trial_replicate_min_delta_mean
+            and int(summary.get("regression_count", 0) or 0)
+            <= self.orchestrator.policy.agent_trial_replicate_max_regression_count
         )
-        payload = {
-            "status": "succeeded",
-            "trial_id": trial_id,
-            "instruction": instruction,
-            "hypothesis": hypothesis,
-            "summary": summary,
-            "case_results": case_results,
+
+    def _summarize_trial_replicates(self, replicate_runs: list[dict[str, object]]) -> dict[str, object]:
+        summaries = [run.get("summary", {}) for run in replicate_runs if isinstance(run.get("summary"), dict)]
+        delta_means = [float(summary.get("delta_mean", 0.0) or 0.0) for summary in summaries]
+        total_means = [float(summary.get("total_score_mean", 0.0) or 0.0) for summary in summaries]
+        regression_counts = [int(summary.get("regression_count", 0) or 0) for summary in summaries]
+        all_case_deltas = [
+            float(case_result.get("delta_vs_baseline", 0.0) or 0.0)
+            for run in replicate_runs
+            for case_result in run.get("case_results", [])
+            if isinstance(case_result, dict)
+        ]
+        delta_mean_avg = sum(delta_means) / len(delta_means) if delta_means else 0.0
+        delta_mean_min = min(delta_means) if delta_means else 0.0
+        total_score_mean_avg = sum(total_means) / len(total_means) if total_means else 0.0
+        total_score_mean_min = min(total_means) if total_means else 0.0
+        worst_case_delta = min(all_case_deltas) if all_case_deltas else 0.0
+        max_regression_count = max(regression_counts) if regression_counts else 0
+        stable = (
+            delta_mean_avg >= self.orchestrator.policy.agent_trial_replicate_min_delta_mean
+            and delta_mean_min >= self.orchestrator.policy.agent_trial_replicate_min_worst_delta
+            and worst_case_delta >= self.orchestrator.policy.agent_trial_replicate_min_worst_delta
+            and max_regression_count <= self.orchestrator.policy.agent_trial_replicate_max_regression_count
+        )
+        return {
+            "replicate_count": len(summaries),
+            "stable": stable,
+            "delta_mean_avg": delta_mean_avg,
+            "delta_mean_min": delta_mean_min,
+            "delta_mean_max": max(delta_means) if delta_means else 0.0,
+            "total_score_mean_avg": total_score_mean_avg,
+            "total_score_mean_min": total_score_mean_min,
+            "worst_case_delta": worst_case_delta,
+            "max_regression_count": max_regression_count,
+            "regression_count_total": sum(regression_counts),
         }
-        self.orchestrator.artifacts.write_json(
-            "agent_observations",
-            f"iteration_{self.iteration:04d}_{trial_id}.json",
-            payload,
-        )
-        return payload
 
     def synthesize_cross_case_tuning(self) -> dict[str, object]:
         trials = self.list_previous_trials()
@@ -1088,13 +1159,24 @@ class HumanReferenceSearchContext:
             if trial.get("status") == "succeeded"
             and float(trial.get("summary", {}).get("delta_mean", 0.0) or 0.0) >= 0.0
             and int(trial.get("summary", {}).get("regression_count", 0) or 0) == 0
+            and self._trial_is_replicate_stable(trial)
         ]
         return {
             "min_cases_for_generalized_tuning": self.orchestrator.policy.min_cases_for_generalized_tuning,
+            "trial_replicates": self.orchestrator.policy.agent_trial_replicates,
             "successful_trial_count": len(successful),
             "recommended_source_trial_ids": [str(trial["trial_id"]) for trial in successful[:5]],
-            "note": "Prefer trials with non-negative delta and zero regressions across multiple cases.",
+            "note": "Prefer replicated trials with non-negative delta, zero regressions, and stable worst-case behavior.",
         }
+
+    def _trial_is_replicate_stable(self, trial: dict[str, object]) -> bool:
+        summary = trial.get("summary", {})
+        if not isinstance(summary, dict):
+            return False
+        replicate_summary = summary.get("replicate_summary")
+        if not isinstance(replicate_summary, dict):
+            return self.orchestrator.policy.agent_trial_replicates <= 1
+        return bool(replicate_summary.get("stable"))
 
     def _trial_cases(self, case_id: str | None) -> list[Case]:
         cases: list[Case] = []

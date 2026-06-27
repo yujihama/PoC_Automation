@@ -74,6 +74,10 @@ def test_human_reference_context_records_autonomous_trial_and_hides_holdout(tmp_
             candidates_per_iteration=1,
             cheap_sample_size=2,
             per_case_trial_budget=1,
+            agent_trial_replicates=2,
+            agent_trial_replicate_min_delta_mean=-999,
+            agent_trial_replicate_min_worst_delta=-999,
+            agent_trial_replicate_max_regression_count=99,
             allow_neutral_train_probe=True,
             data_visibility_policy="human_reference_v3_train_validation",
         ),
@@ -83,6 +87,8 @@ def test_human_reference_context_records_autonomous_trial_and_hides_holdout(tmp_
 
     assert agent.trial_result["status"] == "succeeded"
     assert agent.trial_result["summary"]["case_count"] == 3
+    assert agent.trial_result["summary"]["replicate_summary"]["replicate_count"] == 2
+    assert agent.trial_result["summary"]["replicate_summary"]["stable"] is True
     assert agent.budget_result["status"] == "budget_exhausted"
     with registry.connect() as conn:
         trial_count = conn.execute("SELECT COUNT(*) AS count FROM agent_trial_observations").fetchone()["count"]
