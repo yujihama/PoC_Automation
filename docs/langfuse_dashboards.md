@@ -12,6 +12,7 @@ Dataset Run links, metadata, and tags to Langfuse.
 ```bash
 POC_LANGFUSE_ENABLED=true
 LANGFUSE_HOST=http://localhost:3000
+LANGFUSE_BASE_URL=http://localhost:3000
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_PROJECT=poc-tuning

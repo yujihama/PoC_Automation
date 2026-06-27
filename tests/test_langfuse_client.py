@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 from poc_automation.config import LangfuseConfig
@@ -8,7 +9,13 @@ from poc_automation.langfuse_client import (
     LangfuseReporter,
     LangfuseScoreConfigInitializer,
 )
-from poc_automation.models import EvaluationResult, NormalizedResult, TuningCandidate
+from poc_automation.models import AppRunResult, EvaluationResult, NormalizedResult, TuningCandidate
+
+
+@dataclass(frozen=True)
+class FakeScoreConfigItem:
+    name: str
+    id: str
 
 
 class FakeObservation:
@@ -40,13 +47,16 @@ class FakeDatasetItems:
 class FakeScoreConfigs:
     def __init__(self):
         self.created = []
+        self.existing = []
 
     def get(self, limit=100):
-        return type("Response", (), {"data": []})()
+        return type("Response", (), {"data": self.existing})()
 
     def create(self, **kwargs):
         self.created.append(kwargs)
-        return kwargs
+        created = FakeScoreConfigItem(name=kwargs["name"], id=f"cfg_{kwargs['name']}")
+        self.existing.append(created)
+        return created
 
 
 @dataclass
@@ -95,6 +105,23 @@ def _reporter() -> LangfuseReporter:
     return reporter
 
 
+def test_reporter_sets_host_and_base_url_env(monkeypatch):
+    monkeypatch.delenv("LANGFUSE_HOST", raising=False)
+    monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
+
+    LangfuseReporter(
+        LangfuseConfig(
+            enabled=True,
+            host="http://localhost:3000",
+            public_key="pk-test",
+            secret_key="sk-test",
+        )
+    )
+
+    assert os.environ["LANGFUSE_HOST"] == "http://localhost:3000"
+    assert os.environ["LANGFUSE_BASE_URL"] == "http://localhost:3000"
+
+
 def test_case_run_trace_uses_design_trace_name_metadata_and_score_names():
     reporter = _reporter()
     trace = reporter.start_trace(
@@ -139,6 +166,70 @@ def test_case_run_trace_uses_design_trace_name_metadata_and_score_names():
     assert "judgement_score" in score_names
     assert "delta_vs_baseline" in score_names
     assert "effect_label" in score_names
+
+
+def test_record_output_creates_target_generation_with_usage_details():
+    reporter = _reporter()
+    trace = reporter.start_trace(
+        name="poc.case_run",
+        case_id="case_001",
+        tuning_id="tune_001",
+        session_id="search_001",
+        input={"materialized_instruction": "Check citations."},
+        metadata={"search_run_id": "search_001"},
+    )
+    candidate = TuningCandidate(tuning_id="tune_001", patch=None)
+
+    reporter.record_output(
+        trace=trace,
+        output=NormalizedResult(judgement="ok"),
+        candidate=candidate,
+        app_result=AppRunResult(
+            app_run_id="app_001",
+            normalized_result=NormalizedResult(judgement="ok"),
+            cost={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+            latency_ms=123,
+        ),
+    )
+
+    client = reporter.client
+    assert isinstance(client, FakeClient)
+    generation = [item for item in client.observations if item["kwargs"]["name"] == "target_agent_call"][0]
+    assert generation["kwargs"]["as_type"] == "generation"
+    assert generation["kwargs"]["usage_details"] == {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "total_tokens": 15,
+    }
+
+
+def test_scores_use_matching_score_config_id_when_available():
+    reporter = _reporter()
+    client = reporter.client
+    assert isinstance(client, FakeClient)
+    client.api.score_configs.existing = [FakeScoreConfigItem(name="total_score", id="cfg_total_score")]
+    trace = reporter.start_trace(
+        name="poc.case_run",
+        case_id="case_001",
+        tuning_id="tune_001",
+        session_id="search_001",
+        input={},
+        metadata={"search_run_id": "search_001"},
+    )
+
+    reporter.record_scores(
+        trace=trace,
+        results=[
+            EvaluationResult(
+                evaluator_name="total_score",
+                evaluator_version="v1",
+                score=0.9,
+            )
+        ],
+    )
+
+    total_score = [score for score in client.scores if score["name"] == "total_score"][0]
+    assert total_score["config_id"] == "cfg_total_score"
 
 
 def test_hosted_dataset_sync_creates_stable_dataset_items():

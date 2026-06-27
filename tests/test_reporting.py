@@ -24,16 +24,32 @@ def test_full_run_report_includes_target_iterations_and_final_result(tmp_path: P
         evaluator_suite=EvaluatorSuite(),
         policy=SearchPolicy(iterations=1, candidates_per_iteration=2, cheap_sample_size=2),
     ).run()
+    with registry.connect() as conn:
+        conn.execute(
+            "UPDATE case_runs SET langfuse_trace_id = ? WHERE run_id = (SELECT run_id FROM case_runs LIMIT 1)",
+            ("trace_test_123",),
+        )
 
     output_path = export_full_run_report(
         registry,
         tmp_path / "run_report.md",
         dataset_path=dataset_path,
         run_report={
+            "search_run_id": "search_test",
             "generated_candidates": report.generated_candidates,
             "evaluated_candidates": report.evaluated_candidates,
             "positive_candidates": report.positive_candidates,
             "promoted_candidates": report.promoted_candidates,
+            "langfuse": {
+                "enabled": True,
+                "host": "http://localhost:3000",
+                "project": "eom-poc-v2",
+                "session_id": "search_test",
+                "session_url": "http://localhost:3000/project/eom-poc-v2/sessions/search_test",
+                "dataset_name": "poc-tuning-dataset",
+                "dataset_url": "http://localhost:3000/project/eom-poc-v2/datasets",
+                "dataset_run_names": ["search_test__formal_evaluation__train__tune_001"],
+            },
         },
     )
 
@@ -46,3 +62,6 @@ def test_full_run_report_includes_target_iterations_and_final_result(tmp_path: P
     assert "max_iteration:" not in text
     assert "case_001" in text
     assert "baseline" in text
+    assert "Langfuse session_url" in text
+    assert "http://localhost:3000/project/eom-poc-v2/traces/trace_test_123" in text
+    assert "dataset_run_name" in text

@@ -89,7 +89,7 @@ def export_full_run_report(
     lines.extend(_candidate_summary_lines(candidate_summaries))
     lines.extend(_promotion_lines(promotions))
     lines.extend(_effect_count_lines(effect_counts))
-    lines.extend(_case_run_lines(case_runs))
+    lines.extend(_case_run_lines(case_runs, run_report))
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     return str(path)
 
@@ -181,6 +181,21 @@ def _overview_lines(
                 f"- agent_trial_replicate_max_regression_count: `{_md(run_report.get('agent_trial_replicate_max_regression_count', ''))}`",
             ]
         )
+        langfuse = _json_obj(run_report.get("langfuse"))
+        if langfuse:
+            dataset_run_names = [str(item) for item in _json_list(langfuse.get("dataset_run_names"))]
+            lines.extend(
+                [
+                    f"- Langfuse enabled: `{_md(langfuse.get('enabled', False))}`",
+                    f"- Langfuse host: `{_md(langfuse.get('host', ''))}`",
+                    f"- Langfuse project: `{_md(langfuse.get('project', ''))}`",
+                    f"- Langfuse session_id: `{_md(langfuse.get('session_id', run_report.get('search_run_id', '')))}`",
+                    f"- Langfuse session_url: `{_md(langfuse.get('session_url', ''))}`",
+                    f"- Langfuse dataset_name: `{_md(langfuse.get('dataset_name', ''))}`",
+                    f"- Langfuse dataset_url: `{_md(langfuse.get('dataset_url', ''))}`",
+                    f"- Langfuse dataset_run_names: `{_md(', '.join(dataset_run_names))}`",
+                ]
+            )
     lines.extend(
         [
             f"- OpenRouter input_tokens: `{input_tokens}`",
@@ -491,20 +506,26 @@ def _effect_count_lines(rows) -> list[str]:
     return lines
 
 
-def _case_run_lines(rows) -> list[str]:
+def _case_run_lines(rows, run_report: Mapping[str, object] | None = None) -> list[str]:
     lines = _section_header("ケース別実行結果")
     if not rows:
         lines.append("ケース実行結果はまだありません。")
         lines.append("")
         return lines
+    langfuse = _json_obj(run_report.get("langfuse")) if run_report else {}
+    search_run_id = str(langfuse.get("session_id") or (run_report or {}).get("search_run_id") or "")
     lines.extend(
         [
-            "| iter | split | case_id | tuning_id | status | judgement | total | judgement_score | rationale | citation | unsupported | latency_ms | error |",
-            "|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+            "| iter | split | case_id | tuning_id | status | judgement | total | judgement_score | rationale | citation | unsupported | latency_ms | langfuse_trace | dataset_run_name | error |",
+            "|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---|",
         ]
     )
     for row in rows:
         normalized = _json_obj(row["normalized_output_json"])
+        trace_id = str(row["langfuse_trace_id"] or "")
+        trace_url = _langfuse_trace_url(langfuse, trace_id)
+        trace_cell = f"[`{_md(_short(trace_id, 12))}`]({_md(trace_url)})" if trace_url else f"`{_md(trace_id)}`"
+        dataset_run_name = _dataset_run_name(search_run_id, row["split"], row["tuning_id"])
         lines.append(
             "| "
             + " | ".join(
@@ -521,6 +542,8 @@ def _case_run_lines(rows) -> list[str]:
                     _fmt(row["citation_score"]),
                     _fmt(row["unsupported_claim_rate"]),
                     str(row["latency_ms"] or ""),
+                    trace_cell,
+                    f"`{_md(dataset_run_name)}`",
                     _md(_short(row["error_message"] or "", 100)),
                 ]
             )
@@ -528,6 +551,23 @@ def _case_run_lines(rows) -> list[str]:
         )
     lines.append("")
     return lines
+
+
+def _langfuse_trace_url(langfuse: Mapping[str, object], trace_id: str) -> str:
+    if not trace_id:
+        return ""
+    host = str(langfuse.get("host") or "").rstrip("/")
+    project = str(langfuse.get("project") or "")
+    if not host or not project:
+        return ""
+    return f"{host}/project/{project}/traces/{trace_id}"
+
+
+def _dataset_run_name(search_run_id: str, split: object, tuning_id: object) -> str:
+    if not search_run_id:
+        return ""
+    run_type = "baseline" if str(tuning_id) == "baseline" else "formal_evaluation"
+    return f"{search_run_id}__{run_type}__{split}__{tuning_id}"
 
 
 def _section_header(title: str, *, level: int = 2) -> list[str]:
@@ -668,6 +708,7 @@ SELECT
   eb.created_at AS experiment_created_at,
   cr.case_id,
   cr.tuning_id,
+  cr.langfuse_trace_id,
   cr.status,
   cr.latency_ms,
   cr.normalized_output_json,

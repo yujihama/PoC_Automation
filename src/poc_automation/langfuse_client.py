@@ -143,10 +143,12 @@ class LangfuseReporter:
         self.client: Any | None = None
         self._new_sdk = False
         self._pending_dataset_run_items: list[dict[str, object]] = []
+        self._score_config_ids: dict[str, str] | None = None
         if not self.enabled:
             return
         if self.config.host:
             os.environ.setdefault("LANGFUSE_HOST", self.config.host)
+            os.environ.setdefault("LANGFUSE_BASE_URL", self.config.host)
         if self.config.public_key:
             os.environ.setdefault("LANGFUSE_PUBLIC_KEY", self.config.public_key)
         if self.config.secret_key:
@@ -163,9 +165,23 @@ class LangfuseReporter:
                 self.client = Langfuse(
                     public_key=self.config.public_key,
                     secret_key=self.config.secret_key,
+                    base_url=self.config.host,
                     host=self.config.host,
                 )
                 self._new_sdk = False
+            except TypeError:
+                try:
+                    from langfuse import Langfuse  # type: ignore
+
+                    self.client = Langfuse(
+                        public_key=self.config.public_key,
+                        secret_key=self.config.secret_key,
+                        host=self.config.host,
+                    )
+                    self._new_sdk = False
+                except Exception:
+                    self.enabled = False
+                    self.client = None
             except Exception:
                 self.enabled = False
                 self.client = None
@@ -429,6 +445,7 @@ class LangfuseReporter:
         metadata = {"tuning_candidate": _candidate_summary(candidate)}
         try:
             if trace.observation is not None:
+                self._record_target_generation(trace=trace, app_result=app_result)
                 self._finish_observation(trace, output=payload, metadata=metadata)
             elif hasattr(self.client, "trace"):
                 self.client.trace(id=trace.trace_id, output=payload, metadata=metadata)
@@ -470,9 +487,9 @@ class LangfuseReporter:
         tuning_id: str,
         trace_id: str | None,
         metadata: dict[str, object] | None = None,
-    ) -> None:
+    ) -> str | None:
         if self.config.dataset_mode != "hosted" or not self.enabled or not self.client or not trace_id:
-            return
+            return None
         run_name = f"{search_run_id}__{run_type}__{split}__{tuning_id}"
         self._pending_dataset_run_items.append(
             {
@@ -491,6 +508,7 @@ class LangfuseReporter:
                 },
             }
         )
+        return run_name
 
     def record_search_summary(
         self,
@@ -672,19 +690,27 @@ class LangfuseReporter:
         if not self.enabled or self.client is None:
             return
         score_id = _stable_short_id("|".join([trace_id or session_id or dataset_run_id or "", name]))
+        config_id = self._score_config_id(name)
         try:
             if hasattr(self.client, "create_score"):
-                self.client.create_score(
-                    trace_id=trace_id,
-                    session_id=session_id,
-                    dataset_run_id=dataset_run_id,
-                    name=name,
-                    value=value,
-                    score_id=score_id,
-                    data_type=data_type,
-                    comment=comment,
-                    metadata=metadata,
-                )
+                kwargs = {
+                    "trace_id": trace_id,
+                    "session_id": session_id,
+                    "dataset_run_id": dataset_run_id,
+                    "name": name,
+                    "value": value,
+                    "score_id": score_id,
+                    "data_type": data_type,
+                    "comment": comment,
+                    "metadata": metadata,
+                }
+                if config_id:
+                    kwargs["config_id"] = config_id
+                try:
+                    self.client.create_score(**kwargs)
+                except TypeError:
+                    kwargs.pop("config_id", None)
+                    self.client.create_score(**kwargs)
             elif hasattr(self.client, "score"):
                 kwargs = {
                     "name": name,
@@ -730,6 +756,30 @@ class LangfuseReporter:
             if tag and tag not in merged:
                 merged.append(tag)
         return merged
+
+    def _score_config_id(self, name: str) -> str | None:
+        if self._score_config_ids is None:
+            self._score_config_ids = self._load_score_config_ids()
+        return self._score_config_ids.get(name)
+
+    def _load_score_config_ids(self) -> dict[str, str]:
+        api = getattr(self.client, "api", None) if self.client else None
+        score_configs = getattr(api, "score_configs", None) if api is not None else None
+        get = getattr(score_configs, "get", None)
+        if not callable(get):
+            return {}
+        try:
+            response = get(limit=100)
+        except Exception:
+            return {}
+        data = getattr(response, "data", None) or getattr(response, "items", None) or []
+        config_ids: dict[str, str] = {}
+        for item in data:
+            item_name = getattr(item, "name", None)
+            item_id = getattr(item, "id", None) or getattr(item, "config_id", None)
+            if item_name and item_id:
+                config_ids[str(item_name)] = str(item_id)
+        return config_ids
 
 
 class LangfuseDatasetSync:
@@ -861,7 +911,12 @@ class LangfuseScoreConfigInitializer:
                 continue
             try:
                 kwargs = self._create_kwargs(spec)
-                create(**kwargs)
+                created_config = create(**kwargs)
+                created_id = getattr(created_config, "id", None) or getattr(created_config, "config_id", None)
+                if created_id:
+                    if self.reporter._score_config_ids is None:
+                        self.reporter._score_config_ids = {}
+                    self.reporter._score_config_ids[spec.name] = str(created_id)
                 created.append(spec.name)
             except Exception:
                 failed.append(spec.name)

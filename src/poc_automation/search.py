@@ -45,6 +45,7 @@ class SearchRunReport:
     positive_candidates: int
     promoted_candidates: int
     search_run_id: str = ""
+    langfuse: dict[str, object] = field(default_factory=dict)
     skipped_duplicate_candidates: int = 0
     needs_more_validation_candidates: int = 0
     baseline_case_count: int = 0
@@ -85,6 +86,7 @@ class SearchOrchestrator:
         self.policy = policy or SearchPolicy()
         self.run_metadata = run_metadata or {}
         self.search_run_id: str | None = None
+        self._langfuse_dataset_run_names: set[str] = set()
         self.materializer = CsvMaterializer()
         self.validator = PatchValidator(max_instruction_chars=self.policy.max_instruction_chars)
         self.generalizer = TuningGeneralizer()
@@ -92,12 +94,13 @@ class SearchOrchestrator:
 
     def run(self) -> SearchRunReport:
         search_run_id = self._ensure_search_run_id()
+        self._langfuse_dataset_run_names = set()
         self.langfuse.start_search_session(
             search_run_id=search_run_id,
             dataset=self.dataset,
             metadata=self.run_metadata,
         )
-        self.langfuse.sync_dataset(self.dataset)
+        dataset_sync = self.langfuse.sync_dataset(self.dataset)
 
         generated_count = 0
         evaluated_count = 0
@@ -253,6 +256,10 @@ class SearchOrchestrator:
             positive_candidates=positive_count,
             promoted_candidates=promoted_count,
             search_run_id=search_run_id,
+            langfuse=self._langfuse_report_metadata(
+                search_run_id=search_run_id,
+                dataset_sync=dataset_sync,
+            ),
             skipped_duplicate_candidates=duplicate_count,
             needs_more_validation_candidates=needs_more_validation_count,
             baseline_case_count=baseline_case_count,
@@ -297,6 +304,24 @@ class SearchOrchestrator:
             stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
             self.search_run_id = f"search_{stamp}_{uuid.uuid4().hex[:6]}"
         return self.search_run_id
+
+    def _langfuse_report_metadata(self, *, search_run_id: str, dataset_sync) -> dict[str, object]:
+        config = self.langfuse.config
+        host = (config.host or "").rstrip("/")
+        project = config.project or ""
+        project_base = f"{host}/project/{project}" if host and project else ""
+        dataset_name = getattr(dataset_sync, "dataset_name", None)
+        return {
+            "enabled": bool(self.langfuse.enabled),
+            "host": config.host,
+            "project": config.project,
+            "session_id": search_run_id,
+            "session_url": f"{project_base}/sessions/{search_run_id}" if project_base else "",
+            "traces_url": f"{project_base}/traces" if project_base else "",
+            "dataset_name": dataset_name,
+            "dataset_url": f"{project_base}/datasets" if project_base else "",
+            "dataset_run_names": sorted(self._langfuse_dataset_run_names),
+        }
 
     def _langfuse_case_input(self, case: Case, candidate: TuningCandidate) -> dict[str, object]:
         evidence_summary: object
@@ -553,7 +578,7 @@ class SearchOrchestrator:
                     **(result.cost or {}),
                 },
             )
-            self.langfuse.record_dataset_run_item(
+            dataset_run_name = self.langfuse.record_dataset_run_item(
                 search_run_id=search_run_id,
                 dataset=self.dataset,
                 case_id=case.case_id,
@@ -563,6 +588,8 @@ class SearchOrchestrator:
                 trace_id=trace.trace_id,
                 metadata={"experiment_id": experiment_id},
             )
+            if dataset_run_name:
+                self._langfuse_dataset_run_names.add(dataset_run_name)
             case_results.append(
                 {
                     "case_id": case.case_id,
