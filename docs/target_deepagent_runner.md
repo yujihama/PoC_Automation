@@ -6,7 +6,7 @@
 | --- | --- |
 | `mock` | 外部APIなしで探索ループを検証する決定論的な疑似runner |
 | `http` | 既存の自社PoCアプリAPIを呼び出すrunner |
-| `deepagent` / `deepagent-openrouter` | LangChain Deep Agents + OpenRouter/Qwenで評価対象アプリを代替するrunner |
+| `deepagent` / `deepagent-openrouter` | OpenRouter HTTP + Qwenで評価対象アプリを代替するrunner |
 
 `mock` は実LLMではありません。CSV追加指示に含まれる「証跡」「引用」「条件」「判断不能」などの語を見て、改善・失敗を疑似的に発生させます。探索基盤のテストには有効ですが、評価対象エージェントとしての振る舞いを検証するものではありません。
 
@@ -15,14 +15,12 @@
 ## 依存関係
 
 ```bash
-pip install -e '.[target-agent]'
+pip install -e .
 ```
 
 このoptional extraは以下を入れます。
 
 ```text
-deepagents
-langchain-openrouter
 ```
 
 ## 環境変数
@@ -50,7 +48,7 @@ qwen/qwen3-max
 
 ## 実行例
 
-チューニング候補生成はローカルheuristic、評価対象アプリはDeepAgent/Qwenにする例です。
+チューニング候補生成はローカルheuristic、評価対象アプリはOpenRouter/Qwenにする例です。
 
 ```bash
 poc-auto run-search \
@@ -62,19 +60,19 @@ poc-auto run-search \
   --iterations 1
 ```
 
-チューニング候補生成もDeep Agents Codeに任せる場合は、`--agent` と `--runner` を分けて指定します。
+チューニング候補生成もOpenRouter human-reference探索に任せる場合は、`--agent` と `--runner` を分けて指定します。
 
 ```bash
 poc-auto run-search \
   --dataset examples/dataset.json \
-  --agent deepagents-code \
+  --agent deepagent-human-ref \
   --runner deepagent
 ```
 
 このときの責務分担は次のとおりです。
 
 ```text
---agent deepagents-code
+--agent deepagent-human-ref
   CSVチューニング候補を生成する探索Agent
 
 --runner deepagent
@@ -83,7 +81,7 @@ poc-auto run-search \
 
 ## 入力prompt
 
-`DeepAgentPocAppRunner` は、以下だけをDeepAgentに渡します。
+`DeepAgentPocAppRunner` は、以下だけをOpenRouterのpromptに含めます。
 
 ```text
 - case_id
@@ -108,7 +106,7 @@ poc-auto run-search \
 
 ## 出力schema
 
-DeepAgentには、JSONオブジェクトのみを返すよう指示します。
+OpenRouter呼び出しでは、JSONオブジェクトのみを返すよう指示します。
 
 ```json
 {

@@ -2,7 +2,7 @@
 
 ## 概要
 
-`src/poc_automation/runner.py` に、実PoCアプリ接続用の `HttpPocAppRunner`、ローカル検証用の `MockPocAppRunner`、LangChain Deep Agents + OpenRouter/Qwenで評価対象アプリを代替する `DeepAgentPocAppRunner` があります。
+`src/poc_automation/runner.py` に、実PoCアプリ接続用の `HttpPocAppRunner`、ローカル検証用の `MockPocAppRunner`、OpenRouter HTTP + Qwenで評価対象アプリを代替する `DeepAgentPocAppRunner` があります。
 
 
 ## DeepAgent runner
@@ -10,7 +10,7 @@
 既存のPoCアプリAPIが未接続でも、実LLMの評価対象Agentを使って探索できます。
 
 ```bash
-pip install -e '.[target-agent]'
+pip install -e .
 export OPENROUTER_API_KEY=sk-or-v1-...
 export OPENROUTER_MODEL=qwen/qwen3-max
 
@@ -20,7 +20,7 @@ poc-auto run-search \
   --runner deepagent
 ```
 
-`DeepAgentPocAppRunner` は、materialized CSVと証跡bundleをDeepAgentに渡し、以下の `NormalizedResult` に変換します。人手回答はDeepAgentへ渡しません。詳細は [`target_deepagent_runner.md`](target_deepagent_runner.md) を参照してください。
+`DeepAgentPocAppRunner` は、materialized CSVと証跡bundleをOpenRouterのpromptに含め、以下の `NormalizedResult` に変換します。人手回答は評価対象runnerへ渡しません。詳細は [`target_deepagent_runner.md`](target_deepagent_runner.md) を参照してください。
 
 ## 標準API想定
 

@@ -2,7 +2,7 @@ from poc_automation.config import TargetAgentConfig
 from poc_automation.dataset import load_dataset_manifest
 from poc_automation.runner import (
     DeepAgentPocAppRunner,
-    build_deepagent_prompt,
+    build_target_agent_prompt,
     normalize_app_response,
     parse_agent_json_response,
 )
@@ -30,10 +30,10 @@ def test_parse_agent_json_extracts_embedded_object():
     assert normalized.warnings == ["x"]
 
 
-def test_deepagent_prompt_does_not_include_expected_output():
+def test_target_agent_prompt_does_not_include_expected_output():
     dataset = load_dataset_manifest("examples/dataset.json")
     case = dataset.cases[0]
-    prompt = build_deepagent_prompt(case)
+    prompt = build_target_agent_prompt(case=case, materialized_csv_path=case.procedure_csv_path)
     assert case.case_id in prompt
     assert "expected_output" not in prompt
     assert "human_reference" not in prompt
@@ -70,10 +70,8 @@ def test_deepagent_runner_can_be_exercised_without_network() -> None:
 def test_target_agent_env_parses_openrouter_routing(monkeypatch):
     monkeypatch.setenv("OPENROUTER_PROVIDER_JSON", '{"data_collection":"deny"}')
     monkeypatch.setenv("OPENROUTER_ROUTE", "fallback")
-    monkeypatch.setenv("POC_TARGET_AGENT_USE_DEEPAGENT_TOOLS", "true")
 
     cfg = TargetAgentConfig.from_env()
 
     assert cfg.openrouter_provider == {"data_collection": "deny"}
     assert cfg.route == "fallback"
-    assert cfg.use_deepagent_tools is True

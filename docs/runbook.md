@@ -47,22 +47,24 @@ export LANGFUSE_SECRET_KEY=sk-lf-...
 
 その後、通常通り `poc-auto run-search` を実行します。
 
-## 5. Deep Agents Codeへ切り替え
+## 5. OpenRouter human-reference探索へ切り替え
 
 ```bash
-export POC_AUTOMATION_AGENT=deepagents-code
-export DEEPAGENTS_CODE_BIN=dcode
+export POC_AUTOMATION_AGENT=deepagent-human-ref
+export POC_AUTOMATION_RUNNER=deepagent
+export OPENROUTER_API_KEY=sk-or-v1-...
+export OPENROUTER_MODEL=qwen/qwen3.6-flash
 
 poc-auto run-search \
   --dataset datasets/your_dataset.json \
-  --runner http
+  --runner deepagent
 ```
 
-## 6. Clineへ切り替え
+## 6. OpenRouter設定確認
 
 ```bash
-export POC_AUTOMATION_AGENT=cline
-export CLINE_BIN=cline
+export POC_AUTOMATION_AGENT=deepagent-human-ref
+export POC_AUTOMATION_RUNNER=deepagent
 
 poc-auto run-search \
   --dataset datasets/your_dataset.json \

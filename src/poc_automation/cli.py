@@ -54,9 +54,6 @@ def main(argv: list[str] | None = None) -> int:
             "deepagent-human-ref",
             "human-reference",
             "human-ref",
-            "deepagents-code",
-            "dcode",
-            "cline",
         ],
     )
     p_run.add_argument("--runner", default=None, choices=["mock", "http", "deepagent", "deepagent-openrouter"])
