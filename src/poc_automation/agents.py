@@ -1,8 +1,8 @@
 """Tuning agents.
 
-The orchestrator depends on the `TuningAgent` protocol.  DeepAgent/OpenRouter is
-used for LLM-based tuning exploration, while the deterministic heuristic agent
-keeps the prototype runnable in isolated environments and tests.
+The orchestrator depends on the `TuningAgent` protocol. OpenRouter is used for
+LLM-based tuning exploration, while the deterministic heuristic agent keeps the
+prototype runnable in isolated environments and tests.
 """
 
 from __future__ import annotations
@@ -10,11 +10,9 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import urllib.error
 import urllib.request
 import uuid
-from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .config import CandidateAgentConfig
@@ -220,7 +218,7 @@ class HeuristicTuningAgent:
 
 
 class DeepAgentTuningAgent:
-    """LLM-based tuning candidate generator using LangChain Deep Agents.
+    """LLM-based tuning candidate generator using direct OpenRouter HTTP calls.
 
     The candidate generator only receives failure summaries and patch context. It
     does not receive human reference answers or expected outputs.
@@ -277,46 +275,12 @@ class DeepAgentTuningAgent:
             max_candidates=max_candidates,
             parent_tuning_ids=parent_tuning_ids,
         )
-        if not self.config.use_deepagent_tools:
-            return self._invoke_openrouter_http_messages(
-                [
-                    {"role": "system", "content": self.config.system_prompt},
-                    {"role": "user", "content": prompt},
-                ]
-            )
-
-        try:
-            from deepagents import create_deep_agent  # type: ignore
-            from langchain_openrouter import ChatOpenRouter  # type: ignore
-        except ImportError as exc:  # pragma: no cover - optional dependency path
-            raise RuntimeError(
-                "DeepAgentTuningAgent requires optional dependencies. "
-                "Install with: pip install -e .[target-agent]"
-            ) from exc
-
-        model_kwargs: dict[str, object] = {
-            "model": self.config.model,
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
-            "max_retries": self.config.max_retries,
-            "timeout": self.config.timeout_seconds,
-        }
-        if self.config.openrouter_provider:
-            model_kwargs["openrouter_provider"] = self.config.openrouter_provider
-        if self.config.route:
-            model_kwargs["route"] = self.config.route
-        if self.config.app_url:
-            model_kwargs["app_url"] = self.config.app_url
-        if self.config.app_title:
-            model_kwargs["app_title"] = self.config.app_title
-
-        model = ChatOpenRouter(**model_kwargs)
-        agent = create_deep_agent(
-            model=model,
-            tools=[],
-            system_prompt=self.config.system_prompt,
+        return self._invoke_openrouter_http_messages(
+            [
+                {"role": "system", "content": self.config.system_prompt},
+                {"role": "user", "content": prompt},
+            ]
         )
-        return agent.invoke({"messages": [{"role": "user", "content": prompt}]})
 
     def _invoke_openrouter_http_messages(self, messages: list[dict[str, str]]) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -450,7 +414,7 @@ class DeepAgentTuningAgent:
                 ),
                 text=text,
             ),
-            hypothesis=str(item.get("hypothesis") or "DeepAgentが提案したCSV追加指示候補"),
+            hypothesis=str(item.get("hypothesis") or "OpenRouterが提案したCSV追加指示候補"),
             generated_by="deepagent-openrouter",
             generator_prompt_version=self.generator_prompt_version,
             labels={
@@ -602,95 +566,13 @@ class HumanReferenceDeepAgentTuningAgent(DeepAgentTuningAgent):
         if self.runtime_context is None:
             raise RuntimeError("deepagent-human-ref runtime context is not configured")
         self._prepare_openrouter_env()
-        if not self.config.use_deepagent_tools:
-            return self._invoke_human_reference_http_loop(
-                failures=failures,
-                base_csv_id=base_csv_id,
-                row_selector=row_selector,
-                max_candidates=max_candidates,
-                parent_tuning_ids=parent_tuning_ids,
-            )
-
-        try:
-            from deepagents import create_deep_agent  # type: ignore
-            from langchain_openrouter import ChatOpenRouter  # type: ignore
-        except ImportError as exc:  # pragma: no cover - optional dependency path
-            raise RuntimeError(
-                "HumanReferenceDeepAgentTuningAgent requires optional dependencies. "
-                "Install with: pip install -e .[target-agent]"
-            ) from exc
-
-        context = self.runtime_context
-
-        def list_case_inventory() -> str:
-            """List available case ids, splits, domains, and reference visibility."""
-            return json.dumps(context.list_case_inventory(), ensure_ascii=False, indent=2)
-
-        def read_case_input(case_id: str) -> str:
-            """Read one case's procedure, evidence, and safe metadata."""
-            return json.dumps(context.read_case_input(case_id), ensure_ascii=False, indent=2)
-
-        def read_human_result(case_id: str) -> str:
-            """Read the visible human result for a train/validation case."""
-            return json.dumps(context.read_human_result(case_id), ensure_ascii=False, indent=2)
-
-        def list_previous_trials() -> str:
-            """List earlier draft-instruction trials and their score summaries."""
-            return json.dumps(context.list_previous_trials(), ensure_ascii=False, indent=2)
-
-        def evaluate_draft_instruction(instruction: str, hypothesis: str = "", case_id: str = "") -> str:
-            """Evaluate one draft on all visible trial cases; case_id only changes ordering/focus."""
-            return json.dumps(
-                context.evaluate_draft_instruction(
-                    instruction=instruction,
-                    hypothesis=hypothesis,
-                    case_id=case_id or None,
-                ),
-                ensure_ascii=False,
-                indent=2,
-            )
-
-        def synthesize_cross_case_tuning() -> str:
-            """Summarize which draft instructions look reusable across cases."""
-            return json.dumps(context.synthesize_cross_case_tuning(), ensure_ascii=False, indent=2)
-
-        model_kwargs: dict[str, object] = {
-            "model": self.config.model,
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
-            "max_retries": self.config.max_retries,
-            "timeout": self.config.timeout_seconds,
-        }
-        if self.config.openrouter_provider:
-            model_kwargs["openrouter_provider"] = self.config.openrouter_provider
-        if self.config.route:
-            model_kwargs["route"] = self.config.route
-        if self.config.app_url:
-            model_kwargs["app_url"] = self.config.app_url
-        if self.config.app_title:
-            model_kwargs["app_title"] = self.config.app_title
-
-        model = ChatOpenRouter(**model_kwargs)
-        agent = create_deep_agent(
-            model=model,
-            tools=[
-                list_case_inventory,
-                read_case_input,
-                read_human_result,
-                list_previous_trials,
-                evaluate_draft_instruction,
-                synthesize_cross_case_tuning,
-            ],
-            system_prompt=self.config.system_prompt,
-        )
-        prompt = build_human_reference_agent_prompt(
+        return self._invoke_human_reference_http_loop(
             failures=failures,
             base_csv_id=base_csv_id,
             row_selector=row_selector,
             max_candidates=max_candidates,
             parent_tuning_ids=parent_tuning_ids,
         )
-        return agent.invoke({"messages": [{"role": "user", "content": prompt}]})
 
     def _invoke_human_reference_http_loop(
         self,
@@ -849,67 +731,6 @@ class HumanReferenceDeepAgentTuningAgent(DeepAgentTuningAgent):
             )
         )
 
-
-@dataclass(frozen=True)
-class SubprocessAgent:
-    command: list[str]
-    generated_by: str
-    timeout_seconds: int = 120
-
-    def propose_candidates(
-        self,
-        *,
-        failures: list[FailureSummary],
-        base_csv_id: str,
-        row_selector: dict[str, object],
-        max_candidates: int,
-        parent_tuning_ids: list[str] | None = None,
-    ) -> list[TuningCandidate]:
-        payload = {
-            "task": "propose_csv_tuning_patches",
-            "base_csv_id": base_csv_id,
-            "row_selector": row_selector,
-            "max_candidates": max_candidates,
-            "parent_tuning_ids": parent_tuning_ids or [],
-            "failures": [failure.__dict__ for failure in failures],
-            "output_schema": "list[TuningCandidate JSON]",
-            "rules": [
-                "Do not include human reference answers.",
-                "Return JSON only.",
-                "Create small atomic CSV patch candidates.",
-            ],
-        }
-        prompt = json.dumps(payload, ensure_ascii=False, indent=2)
-        completed = subprocess.run(  # noqa: S603 - command is configured by trusted runtime env
-            self.command + [prompt],
-            check=True,
-            text=True,
-            capture_output=True,
-            timeout=self.timeout_seconds,
-        )
-        return [_with_fingerprint(candidate) for candidate in self._parse_candidates(completed.stdout)]
-
-    def _parse_candidates(self, stdout: str) -> list[TuningCandidate]:
-        items = parse_candidate_json_response(stdout)
-        candidates = [tuning_candidate_from_json(item) for item in items]
-        return [
-            TuningCandidate(
-                tuning_id=candidate.tuning_id,
-                patch=candidate.patch,
-                scope=candidate.scope,
-                parent_tuning_ids=candidate.parent_tuning_ids,
-                hypothesis=candidate.hypothesis,
-                generated_by=self.generated_by,
-                generator_prompt_version=candidate.generator_prompt_version,
-                labels=candidate.labels,
-                risk_labels=candidate.risk_labels,
-                status=candidate.status,
-                created_at=candidate.created_at,
-            )
-            for candidate in candidates
-        ]
-
-
 def build_candidate_agent_prompt(
     *,
     failures: list[FailureSummary],
@@ -959,89 +780,6 @@ def build_candidate_agent_prompt(
     }
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
-
-def build_human_reference_agent_prompt(
-    *,
-    failures: list[FailureSummary],
-    base_csv_id: str,
-    row_selector: dict[str, object],
-    max_candidates: int,
-    parent_tuning_ids: list[str] | None = None,
-) -> str:
-    payload = {
-        "task": "human_reference_supervised_csv_tuning_search_v3",
-        "base_csv_id": base_csv_id,
-        "row_selector": row_selector,
-        "max_final_candidates": max_candidates,
-        "parent_tuning_ids": parent_tuning_ids or [],
-        "initial_failure_summaries": [
-            {
-                "case_id": failure.case_id,
-                "failure_mode": failure.failure_mode,
-                "summary": failure.summary,
-                "missing_capability": failure.missing_capability,
-                "scores": failure.scores,
-                "metadata": failure.metadata,
-            }
-            for failure in failures
-        ],
-        "required_workflow": [
-            "Use list_case_inventory first.",
-            "Inspect at least two visible cases when available.",
-            "Use read_case_input and read_human_result for the inspected train/validation cases.",
-            "Call evaluate_draft_instruction at least once before the final answer.",
-            "Treat each draft evaluation as a cross-case check. Passing a case_id only marks the focus case; the tool still evaluates the visible trial set.",
-            "Use synthesize_cross_case_tuning before the final answer when two or more trials/cases are available.",
-            "Return final JSON only. No markdown.",
-        ],
-        "rules": [
-            "The goal is to make target-agent outputs closer to visible human results.",
-            "Do not copy case_id, evidence_id, dates, names, amounts, or exact case-specific strings into a generalized instruction.",
-            "Prefer short reusable instructions for the additional_instruction column.",
-            "Use case_specific only for a deliberately non-general candidate.",
-            "Use procedure_specific or procedure_family for cross-case candidates.",
-            "If a draft regresses another case, explain the risk and avoid promoting it as generalized.",
-            "Keep tactic diversity: do not only produce citation/evidence-grounding variants.",
-            "Explore missing information detection, numeric delta/tolerance checks, condition preconditions, exception priority, cross-evidence contradictions, schema stability, inconclusive triggers, citation granularity, and rules that prevent over-pruning relevant evidence.",
-        ],
-        "output_schema": [
-            {
-                "instruction": "short instruction to append to additional_instruction",
-                "hypothesis": "why this should move outputs closer to human results",
-                "target_failure_mode": [
-                    "wrong_judgement",
-                    "unsupported_rationale",
-                    "citation_mismatch",
-                    "insufficient_evidence",
-                    "condition_branching",
-                    "numeric_mismatch",
-                    "missing_information",
-                ],
-                "tactic_type": [
-                    "evidence_grounding",
-                    "citation_rule",
-                    "condition_branching",
-                    "abstention_rule",
-                    "cross_case_generalization",
-                    "missing_information_detection",
-                    "numeric_delta_tolerance_check",
-                    "condition_precondition_check",
-                    "exception_priority_ordering",
-                    "cross_evidence_contradiction_handling",
-                    "output_schema_stabilization",
-                    "inconclusive_trigger",
-                    "citation_granularity_control",
-                    "avoid_over_pruning_relevant_evidence",
-                ],
-                "scope": "procedure_specific",
-                "source_trial_ids": ["trial id returned by evaluate_draft_instruction"],
-                "generalized_from_cases": ["case ids used for synthesis"],
-                "synthesis_notes": "brief cross-case rationale",
-                "risk_labels": {"overfitting": "low|medium|high", "answer_leakage": "low|medium|high"},
-            }
-        ],
-    }
-    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def parse_candidate_json_response(text: str) -> list[JsonDict]:
@@ -1123,7 +861,7 @@ def _extract_agent_text(result: object) -> str:
     text = _message_content(result)
     if text.strip():
         return text
-    raise RuntimeError("DeepAgent candidate response did not include final message content")
+    raise RuntimeError("candidate-agent response did not include final message content")
 
 
 def _message_content(message: object) -> str:
@@ -1173,13 +911,4 @@ def build_agent(name: str | None = None, config: CandidateAgentConfig | None = N
         return DeepAgentTuningAgent(config)
     if agent_name in {"deepagent-human-ref", "human-reference", "human-ref"}:
         return HumanReferenceDeepAgentTuningAgent(config)
-    if agent_name in {"deepagents-code", "dcode"}:
-        binary = os.getenv("DEEPAGENTS_CODE_BIN", "dcode")
-        return SubprocessAgent(
-            command=[binary, "--skill", "poc-tuning", "--non-interactive", "--quiet"],
-            generated_by="deepagents-code",
-        )
-    if agent_name == "cline":
-        binary = os.getenv("CLINE_BIN", "cline")
-        return SubprocessAgent(command=[binary, "--headless"], generated_by="cline")
     raise ValueError(f"unknown agent: {agent_name}")

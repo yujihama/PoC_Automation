@@ -10,11 +10,11 @@
 - チューニング候補の自動生成
 - リーク・過学習・CSV構文の検査
 - 自社PoCアプリAPIへの差し替え可能なRunner
-- LangChain Deep Agents + OpenRouter/Qwen による評価対象エージェントRunner
+- OpenRouter HTTP + Qwen による評価対象エージェントRunner
 - 判定、根拠、引用、形式、リークリスクの評価
 - SQLiteベースのExperiment Registry
 - Langfuse連携用のTrace / Scoreラッパー
-- Deep Agents Code / Cline を呼び出すためのAgent adapter
+- OpenRouter HTTP 経由の human-reference tuning Agent adapter
 - 効果のあった指示の原子化・汎用化候補生成
 - holdout評価と昇格判断の台帳化
 - サンプルデータで一気通貫に動くローカルdemo
@@ -24,7 +24,7 @@
 ```mermaid
 flowchart TD
     A[Dataset\n手続CSV・証跡・人手回答] --> B[Search Orchestrator]
-    B --> C[Tuning Agent\nHeuristic / Deep Agents Code / Cline]
+    B --> C[Tuning Agent\nHeuristic / DeepAgent Human Ref]
     C --> D[CSV Patch Generator]
     D --> E[Patch Validator]
     E --> F[CSV Materializer]
@@ -85,10 +85,10 @@ PYTHONPATH=src pytest -q
 
 既存実装には、外部APIなしで探索ループを検証するための `MockPocAppRunner` が含まれています。これは実LLMではなく、CSV追加指示に含まれる語を見て疑似的に結果を返す決定論的runnerです。
 
-実LLMで評価対象アプリを代替したい場合は、`--runner deepagent` を使います。このrunnerは、LangChain Deep Agentsで評価対象エージェントを作成し、OpenRouter経由でQwenを呼び出します。
+実LLMで評価対象アプリを代替したい場合は、`--runner deepagent` を使います。このrunnerは、OpenRouter HTTPで評価対象エージェントを作成し、OpenRouter経由でQwenを呼び出します。
 
 ```bash
-pip install -e '.[target-agent]'
+pip install -e .
 export OPENROUTER_API_KEY=sk-or-v1-...
 export OPENROUTER_MODEL=qwen/qwen3-max
 
@@ -101,12 +101,12 @@ poc-auto run-search \
   --iterations 1
 ```
 
-`--agent` はチューニング候補を生成する側、`--runner` は評価対象アプリを実行する側です。したがって、Deep Agents Codeでチューニング候補を作り、DeepAgent/Qwenで評価対象を動かす場合は、以下のように分けて指定します。
+`--agent` はチューニング候補を生成する側、`--runner` は評価対象アプリを実行する側です。現行のLLM実行では、探索側に `deepagent-human-ref`、評価対象側に `deepagent` runnerを指定し、どちらもOpenRouter HTTP経由でQwenを呼び出します。
 
 ```bash
 poc-auto run-search \
   --dataset examples/dataset.json \
-  --agent deepagents-code \
+  --agent deepagent-human-ref \
   --runner deepagent
 ```
 
@@ -154,21 +154,21 @@ Langfuse SDKが入っていない、または `LANGFUSE_ENABLED=false` の場合
 
 詳細は [`docs/langfuse.md`](docs/langfuse.md) を参照してください。
 
-## Deep Agents Code / Cline連携
+## OpenRouter HTTP連携
 
-通常のローカル実行では `heuristic` Agentを使います。Deep Agents CodeまたはClineを使う場合は、該当CLIをインストールし、以下のように指定します。
+通常のローカル実行では `heuristic` Agentを使います。人間結果参照つきの探索では、OpenRouterのAPIキーを設定し、以下のように指定します。
 
 ```bash
 poc-auto run-search \
   --dataset examples/dataset.json \
-  --agent deepagents-code \
+  --agent deepagent-human-ref \
   --runner mock
 ```
 
 ```bash
 poc-auto run-search \
   --dataset examples/dataset.json \
-  --agent cline \
+  --agent deepagent-human-ref \
   --runner mock
 ```
 

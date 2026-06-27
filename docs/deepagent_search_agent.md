@@ -1,11 +1,11 @@
 # DeepAgent探索Agent
 
-この版では、評価対象runnerだけでなく、CSVチューニング候補を生成する探索側も LangChain Deep Agents + OpenRouter/Qwen で実行できます。
+この版では、評価対象runnerだけでなく、CSVチューニング候補を生成する探索側も OpenRouter HTTP + Qwen で実行できます。
 
 ## 実行例
 
 ```bash
-pip install -e '.[target-agent]'
+pip install -e .
 
 export OPENROUTER_API_KEY=sk-or-v1-...
 export POC_CANDIDATE_AGENT_MODEL=qwen/qwen3-max

@@ -66,13 +66,6 @@ def _env_float(*names: str, default: float) -> float:
     return default if value is None else float(value)
 
 
-def _env_bool(*names: str, default: bool) -> bool:
-    value = _env_first(*names)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _env_json_mapping(*names: str) -> JsonDict | None:
     value = _env_first(*names)
     if value is None:
@@ -226,7 +219,7 @@ TARGET_AGENT_SYSTEM_PROMPT = """\
 
 @dataclass(frozen=True)
 class TargetAgentConfig:
-    """Configuration for the DeepAgent-based target PoC runner."""
+    """Configuration for the OpenRouter-backed target PoC runner."""
 
     provider: str = "openrouter"
     base_url: str = DEFAULT_OPENROUTER_BASE_URL
@@ -242,16 +235,7 @@ class TargetAgentConfig:
     route: str | None = None
     max_csv_chars: int = 12000
     max_evidence_chars: int = 30000
-    use_deepagent_tools: bool = False
     system_prompt: str = TARGET_AGENT_SYSTEM_PROMPT
-
-    @property
-    def deepagents_model(self) -> str:
-        """Model identifier usable with Deep Agents string-based routing."""
-
-        if self.provider == "openrouter" and not self.model.startswith("openrouter:"):
-            return f"openrouter:{self.model}"
-        return self.model
 
     @classmethod
     def from_mapping(cls, data: JsonDict | None) -> "TargetAgentConfig":
@@ -276,7 +260,6 @@ class TargetAgentConfig:
             route=data.get("route", base.route),
             max_csv_chars=int(data.get("max_csv_chars", base.max_csv_chars)),
             max_evidence_chars=int(data.get("max_evidence_chars", base.max_evidence_chars)),
-            use_deepagent_tools=bool(data.get("use_deepagent_tools", base.use_deepagent_tools)),
             system_prompt=str(data.get("system_prompt", base.system_prompt)),
         )
 
@@ -364,11 +347,6 @@ class TargetAgentConfig:
                 or os.getenv("TARGET_AGENT_MAX_EVIDENCE_CHARS")
                 or "30000"
             ),
-            use_deepagent_tools=_env_bool(
-                "POC_TARGET_AGENT_USE_DEEPAGENT_TOOLS",
-                "TARGET_AGENT_USE_DEEPAGENT_TOOLS",
-                default=cls.use_deepagent_tools,
-            ),
             system_prompt=os.getenv("POC_TARGET_AGENT_SYSTEM_PROMPT")
             or os.getenv("TARGET_AGENT_SYSTEM_PROMPT")
             or TARGET_AGENT_SYSTEM_PROMPT,
@@ -389,7 +367,7 @@ CANDIDATE_AGENT_SYSTEM_PROMPT = """\
 
 @dataclass(frozen=True)
 class CandidateAgentConfig:
-    """Configuration for the DeepAgent-based tuning candidate generator."""
+    """Configuration for the OpenRouter-backed tuning candidate generator."""
 
     provider: str = "openrouter"
     base_url: str = DEFAULT_OPENROUTER_BASE_URL
@@ -403,7 +381,6 @@ class CandidateAgentConfig:
     app_title: str = "PoC Automation Candidate Generator"
     openrouter_provider: JsonDict | None = None
     route: str | None = None
-    use_deepagent_tools: bool = False
     system_prompt: str = CANDIDATE_AGENT_SYSTEM_PROMPT
 
     @classmethod
@@ -427,7 +404,6 @@ class CandidateAgentConfig:
             app_title=str(data.get("app_title", base.app_title)),
             openrouter_provider=provider_value if isinstance(provider_value, dict) else None,
             route=data.get("route", base.route),
-            use_deepagent_tools=bool(data.get("use_deepagent_tools", base.use_deepagent_tools)),
             system_prompt=str(data.get("system_prompt", base.system_prompt)),
         )
 
@@ -504,11 +480,6 @@ class CandidateAgentConfig:
                 or os.getenv("CANDIDATE_AGENT_OPENROUTER_ROUTE")
                 or os.getenv("OPENROUTER_ROUTE")
                 or cls.route
-            ),
-            use_deepagent_tools=_env_bool(
-                "POC_CANDIDATE_AGENT_USE_DEEPAGENT_TOOLS",
-                "CANDIDATE_AGENT_USE_DEEPAGENT_TOOLS",
-                default=cls.use_deepagent_tools,
             ),
             system_prompt=os.getenv("POC_CANDIDATE_AGENT_SYSTEM_PROMPT")
             or os.getenv("CANDIDATE_AGENT_SYSTEM_PROMPT")

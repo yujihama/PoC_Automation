@@ -1,9 +1,9 @@
 """PoC application runners.
 
 `HttpPocAppRunner` wraps the real upload/execute/fetch API.
-`DeepAgentPocAppRunner` is a LangChain DeepAgents-based target agent backed by
-OpenRouter/Qwen. `MockPocAppRunner` keeps the repository executable without
-external services and is used by tests and examples.
+`DeepAgentPocAppRunner` is an OpenRouter-backed target agent. `MockPocAppRunner`
+keeps the repository executable without external services and is used by tests
+and examples.
 """
 
 from __future__ import annotations
@@ -158,11 +158,12 @@ class MockPocAppRunner:
 
 
 class DeepAgentPocAppRunner:
-    """Evaluation target built with LangChain Deep Agents and OpenRouter/Qwen.
+    """Evaluation target built with direct OpenRouter HTTP calls.
 
     This runner gives the search loop a local LLM-based target application when
-    the external PoC API is not yet available. It creates a Deep Agent with
-    read-only tools for the materialized CSV and evidence bundle.
+    the external PoC API is not yet available. It embeds the materialized CSV
+    and evidence bundle in the prompt so runs do not need optional agent
+    framework dependencies.
     """
 
     def __init__(self, config: TargetAgentConfig | None = None):
@@ -210,50 +211,7 @@ class DeepAgentPocAppRunner:
 
     def _invoke_agent(self, *, case: Case, materialized_csv_path: str) -> Any:
         self._prepare_openrouter_env()
-        if not self.config.use_deepagent_tools:
-            return self._invoke_openrouter_http(case=case, materialized_csv_path=materialized_csv_path)
-
-        try:
-            from deepagents import create_deep_agent  # type: ignore
-            from langchain_openrouter import ChatOpenRouter  # type: ignore
-        except ImportError as exc:  # pragma: no cover - optional dependency path
-            raise RuntimeError(
-                "DeepAgentPocAppRunner requires optional dependencies. "
-                "Install with: pip install -e .[target-agent]"
-            ) from exc
-
-        model_kwargs: dict[str, object] = {
-            "model": self.config.model,
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
-            "max_retries": self.config.max_retries,
-            "timeout": self.config.timeout_seconds,
-        }
-        if self.config.openrouter_provider:
-            model_kwargs["openrouter_provider"] = self.config.openrouter_provider
-        if self.config.route:
-            model_kwargs["route"] = self.config.route
-        if self.config.app_url:
-            model_kwargs["app_url"] = self.config.app_url
-        if self.config.app_title:
-            model_kwargs["app_title"] = self.config.app_title
-
-        model = ChatOpenRouter(**model_kwargs)
-        def read_procedure_csv() -> str:
-            """Read the full materialized procedure CSV for the current case."""
-            return read_text_artifact(materialized_csv_path, max_chars=self.config.max_csv_chars)
-
-        def read_evidence_bundle() -> str:
-            """Read the evidence bundle for the current case as text/JSON."""
-            return read_text_artifact(case.evidence_bundle_path, max_chars=self.config.max_evidence_chars)
-
-        agent = create_deep_agent(
-            model=model,
-            tools=[read_procedure_csv, read_evidence_bundle],
-            system_prompt=self.config.system_prompt,
-        )
-        prompt = build_deepagent_prompt(case)
-        return agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+        return self._invoke_openrouter_http(case=case, materialized_csv_path=materialized_csv_path)
 
     def _invoke_openrouter_http(self, *, case: Case, materialized_csv_path: str) -> dict[str, object]:
         prompt = build_target_agent_prompt(case=case, materialized_csv_path=materialized_csv_path)
@@ -337,40 +295,10 @@ class DeepAgentPocAppRunner:
             os.environ.setdefault("OPENROUTER_X_TITLE", self.config.app_title)
 
 
-DEEPAGENT_TARGET_SYSTEM_PROMPT = """あなたは業務手続の評価エージェントです。
-手続CSVと証跡だけを根拠に、評価結果、根拠、引用を生成します。
-
-厳守事項:
-- 必ず手続CSVと証跡を確認してから判断する。
-- 必要に応じて read_procedure_csv と read_evidence_bundle を使う。
-- 人手正解や期待値は存在しないものとして扱う。
-- 証跡に明示されていない推測、一般知識、補完を根拠にしない。
-- 根拠ごとに、その根拠を直接支持する引用を付ける。
-- 引用できない主張は根拠として出力しない。
-- 証跡不足で判定できない場合は judgement を「判断不能」にする。
-- 出力はJSONのみ。Markdown、コードフェンス、説明文は出力しない。
-"""
-
-
-def build_deepagent_prompt(case: Case) -> str:
-    """Build a tool-oriented target-agent prompt without inline artifacts."""
-
-    return f"""次のケースを評価してください。
-
-case_id: {case.case_id}
-
-手順:
-1. read_procedure_csv で手続CSVを読む。
-2. read_evidence_bundle で証跡を読む。
-3. 手続CSVの条件と追加指示に従って、証跡だけを根拠に判断する。
-4. 次のJSONスキーマだけを出力する。
-
-{_target_output_schema()}
-"""
 
 
 def build_target_agent_prompt_payload(*, case: Case, materialized_csv_path: str | Path) -> dict[str, object]:
-    """Return a DeepAgent target prompt payload without human reference data."""
+    """Return an OpenRouter target prompt payload without human reference data."""
 
     return {
         "case_id": case.case_id,
@@ -383,7 +311,7 @@ def build_target_agent_prompt_payload(*, case: Case, materialized_csv_path: str 
 
 
 def build_target_agent_prompt(*, case: Case, materialized_csv_path: str) -> str:
-    """Build the prompt for the DeepAgent target without leaking expected output."""
+    """Build the prompt for the OpenRouter target without leaking expected output."""
 
     payload = build_target_agent_prompt_payload(case=case, materialized_csv_path=materialized_csv_path)
     metadata = json.dumps(payload["metadata"], ensure_ascii=False, sort_keys=True)
@@ -447,7 +375,7 @@ def _target_output_schema() -> str:
 
 
 def normalize_deepagent_response(raw: dict[str, object]) -> NormalizedResult:
-    """Normalize a DeepAgent response that may omit the outer result envelope."""
+    """Normalize a target agent response that may omit the outer result envelope."""
 
     return normalize_app_response(raw if "result" in raw else {"result": raw})
 
@@ -493,7 +421,7 @@ def normalize_app_response(raw: dict[str, object]) -> NormalizedResult:
 
 
 def parse_deepagent_json_response(text: str) -> dict[str, object]:
-    """Parse a DeepAgent final JSON response with markdown-fence tolerance."""
+    """Parse a target agent final JSON response with markdown-fence tolerance."""
 
     stripped = _strip_code_fence(text.strip())
     try:
@@ -513,11 +441,11 @@ def parse_deepagent_json_response(text: str) -> dict[str, object]:
                 except json.JSONDecodeError:
                     continue
             else:
-                raise RuntimeError(f"DeepAgent did not return a JSON object: {text[:500]}") from None
+                raise RuntimeError(f"target agent did not return a JSON object: {text[:500]}") from None
     if isinstance(value, list) and value and isinstance(value[0], dict):
         value = value[0]
     if not isinstance(value, dict):
-        raise RuntimeError(f"DeepAgent JSON response must be an object: {type(value).__name__}")
+        raise RuntimeError(f"target agent JSON response must be an object: {type(value).__name__}")
     return value
 
 
@@ -554,7 +482,7 @@ def _extract_agent_text(result: object) -> str:
     text = _message_content(result)
     if text.strip():
         return text
-    raise RuntimeError("DeepAgent response did not include final message content")
+    raise RuntimeError("target agent response did not include final message content")
 
 
 def _message_content(message: object) -> str:
@@ -593,39 +521,6 @@ def _extract_usage_metadata(result: object) -> dict[str, object] | None:
             return dict(message["usage_metadata"])
     return None
 
-
-def _read_text_artifact(path: str, *, max_chars: int) -> str:
-    artifact_path = Path(path)
-    if artifact_path.is_file():
-        return _truncate_text(_read_one_text_file(artifact_path), max_chars)
-    if not artifact_path.exists():
-        return f"パスが存在しません: {path}"
-
-    sections: list[str] = []
-    for file_path in sorted(p for p in artifact_path.rglob("*") if p.is_file()):
-        if file_path.name.startswith("."):
-            continue
-        sections.append(f"## {file_path.relative_to(artifact_path)}\n{_read_one_text_file(file_path)}")
-    return _truncate_text("\n\n".join(sections), max_chars)
-
-
-def _read_one_text_file(path: Path) -> str:
-    try:
-        text = path.read_text(encoding="utf-8-sig")
-    except UnicodeDecodeError:
-        return f"{path.name}: binary evidence file is not readable by the local DeepAgent runner"
-    if path.suffix.lower() == ".json":
-        try:
-            return json.dumps(json.loads(text), ensure_ascii=False, indent=2)
-        except json.JSONDecodeError:
-            return text
-    return text
-
-
-def _truncate_text(text: str, max_chars: int) -> str:
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars] + "\n...[truncated]"
 
 
 def _to_optional_int(value: object) -> int | None:

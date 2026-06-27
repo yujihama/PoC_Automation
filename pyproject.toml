@@ -14,7 +14,6 @@ dependencies = []
 
 [project.optional-dependencies]
 langfuse = ["langfuse>=3.0.0"]
-target-agent = ["deepagents", "langchain-openrouter"]
 dev = ["pytest>=8.0.0", "ruff>=0.6.0", "mypy>=1.8.0"]
 api = ["fastapi>=0.111.0", "uvicorn>=0.30.0"]
 
@@ -29,7 +28,7 @@ line-length = 100
 src = ["src", "tests"]
 
 [tool.pytest.ini_options]
-norecursedirs = [".git", ".venv", ".tmp", "PoC_Automation_v2"]
+norecursedirs = [".git", ".venv", ".tmp"]
 
 [tool.mypy]
 python_version = "3.11"

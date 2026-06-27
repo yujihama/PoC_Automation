@@ -29,7 +29,7 @@ def export_v3_evaluation_summary(
     lines.append("")
     lines.append(
         "複数ケースについて、自然言語の手続、PDF/画像の証跡、人間の実施結果を用意し、"
-        "探索用DeepAgentに可視範囲のデータを読ませます。探索用DeepAgentは手続に追記する"
+        "探索用OpenRouterエージェントに可視範囲のデータを読ませます。探索用OpenRouterエージェントは手続に追記する"
         "追加指示を試し、評価対象runnerをOpenRouter経由で実行して、人間の実施結果に近づくかを確認します。"
         "最後に、ケース横断で効きそうな追加指示だけを候補として残します。"
     )

@@ -1,9 +1,8 @@
 """Core data structures used by the tuning search prototype.
 
 The package deliberately uses dataclasses and the standard library so that the
-prototype can run in restricted environments.  Integrations such as Langfuse,
-Deep Agents Code, Cline, and the real PoC application are isolated behind thin
-adapters.
+prototype can run in restricted environments. Integrations such as Langfuse,
+OpenRouter, and the real PoC application are isolated behind thin adapters.
 """
 
 from __future__ import annotations
