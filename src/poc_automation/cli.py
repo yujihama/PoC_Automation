@@ -68,6 +68,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="number of case runner calls to execute concurrently",
     )
+    p_run.add_argument(
+        "--trial-replicates",
+        type=int,
+        default=None,
+        help="number of repeated runs for promising human-reference trial drafts",
+    )
     p_run.add_argument("--report-out", default=None, help="write the full Markdown report here")
     p_run.add_argument("--no-report", action="store_true", help="skip the automatic full Markdown report")
 
@@ -122,7 +128,10 @@ def main(argv: list[str] | None = None) -> int:
                 policy,
                 allow_neutral_train_probe=True,
                 data_visibility_policy="human_reference_v3_train_validation",
+                agent_trial_replicates=max(policy.agent_trial_replicates, 3),
             )
+        if args.trial_replicates is not None:
+            policy = replace(policy, agent_trial_replicates=max(1, args.trial_replicates))
         db_path = args.db or cfg.db_path
         artifact_dir = args.artifact_dir or cfg.artifact_dir
         report = _run_search(
@@ -153,6 +162,10 @@ def main(argv: list[str] | None = None) -> int:
                 "human_reference_splits": list(policy.human_reference_splits),
                 "agent_trial_eval_splits": list(policy.agent_trial_eval_splits),
                 "per_case_trial_budget": policy.per_case_trial_budget,
+                "agent_trial_replicates": policy.agent_trial_replicates,
+                "agent_trial_replicate_min_delta_mean": policy.agent_trial_replicate_min_delta_mean,
+                "agent_trial_replicate_min_worst_delta": policy.agent_trial_replicate_min_worst_delta,
+                "agent_trial_replicate_max_regression_count": policy.agent_trial_replicate_max_regression_count,
                 "allow_neutral_train_probe": policy.allow_neutral_train_probe,
                 "runner_parallelism": policy.runner_parallelism,
                 "db_path": db_path,

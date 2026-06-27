@@ -112,6 +112,10 @@ class SearchPolicy:
     human_reference_splits: tuple[str, ...] = ("train", "validation")
     holdout_reference_visible: bool = False
     per_case_trial_budget: int = 3
+    agent_trial_replicates: int = 1
+    agent_trial_replicate_min_delta_mean: float = 0.0
+    agent_trial_replicate_min_worst_delta: float = 0.0
+    agent_trial_replicate_max_regression_count: int = 0
     cross_case_synthesis_enabled: bool = True
     min_cases_for_generalized_tuning: int = 2
     allow_neutral_train_probe: bool = False
@@ -148,7 +152,23 @@ class SearchPolicy:
                     "POC_AUTOMATION_RUNNER_PARALLELISM",
                     default=cls.runner_parallelism,
                 ),
-            )
+            ),
+            agent_trial_replicates=max(1, _env_int("POC_AGENT_TRIAL_REPLICATES", default=cls.agent_trial_replicates)),
+            agent_trial_replicate_min_delta_mean=_env_float(
+                "POC_AGENT_TRIAL_REPLICATE_MIN_DELTA_MEAN",
+                default=cls.agent_trial_replicate_min_delta_mean,
+            ),
+            agent_trial_replicate_min_worst_delta=_env_float(
+                "POC_AGENT_TRIAL_REPLICATE_MIN_WORST_DELTA",
+                default=cls.agent_trial_replicate_min_worst_delta,
+            ),
+            agent_trial_replicate_max_regression_count=max(
+                0,
+                _env_int(
+                    "POC_AGENT_TRIAL_REPLICATE_MAX_REGRESSION_COUNT",
+                    default=cls.agent_trial_replicate_max_regression_count,
+                ),
+            ),
         )
 
 

@@ -41,5 +41,8 @@ def test_full_run_report_includes_target_iterations_and_final_result(tmp_path: P
     assert "## 対象ケース" in text
     assert "## 全イテレーション結果" in text
     assert "## 最終結果 / 昇格判断" in text
+    assert "formal_evaluation_iterations" in text
+    assert "agent_trial_rounds" in text
+    assert "max_iteration:" not in text
     assert "case_001" in text
     assert "baseline" in text

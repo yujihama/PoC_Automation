@@ -507,6 +507,7 @@ class HumanReferenceDeepAgentTuningAgent(DeepAgentTuningAgent):
             items = self._fallback_items_from_trials(text, max_candidates=max_candidates)
             if not items:
                 raise
+        items = self._filter_items_by_stable_source_trials(items)
         candidates = [
             self._candidate_from_item(
                 item,
@@ -518,6 +519,24 @@ class HumanReferenceDeepAgentTuningAgent(DeepAgentTuningAgent):
         ]
         return candidates[:max_candidates]
 
+    def _filter_items_by_stable_source_trials(self, items: list[JsonDict]) -> list[JsonDict]:
+        if self.runtime_context is None:
+            return items
+        trials = {str(trial.get("trial_id")): trial for trial in self.runtime_context.list_previous_trials()}
+        filtered: list[JsonDict] = []
+        for item in items:
+            source_trial_ids = item.get("source_trial_ids", [])
+            if isinstance(source_trial_ids, str):
+                source_trial_ids = [source_trial_ids]
+            if not source_trial_ids:
+                if not trials:
+                    filtered.append(item)
+                continue
+            source_trials = [trials.get(str(trial_id)) for trial_id in source_trial_ids]
+            if source_trials and all(trial is not None and _trial_replicate_stable(trial) for trial in source_trials):
+                filtered.append(item)
+        return filtered
+
     def _fallback_items_from_trials(self, text: str, *, max_candidates: int) -> list[JsonDict]:
         if self.runtime_context is None:
             return []
@@ -527,6 +546,7 @@ class HumanReferenceDeepAgentTuningAgent(DeepAgentTuningAgent):
             if trial.get("status") == "succeeded"
             and str(trial.get("instruction") or "").strip()
             and int(trial.get("summary", {}).get("regression_count", 0) or 0) == 0
+            and _trial_replicate_stable(trial)
         ]
         if not trials:
             return []
@@ -719,18 +739,42 @@ class HumanReferenceDeepAgentTuningAgent(DeepAgentTuningAgent):
             ],
             "visible_cases": case_payloads,
             "previous_trials": context.list_previous_trials()[-10:],
+            "required_tactic_pool": [
+                "missing_information_detection",
+                "numeric_delta_tolerance_check",
+                "condition_precondition_check",
+                "exception_priority_ordering",
+                "cross_evidence_contradiction_handling",
+                "output_schema_stabilization",
+                "inconclusive_trigger",
+                "citation_granularity_control",
+                "avoid_over_pruning_relevant_evidence",
+                "fact_vs_inference_separation",
+            ],
             "rules": [
                 "Return JSON only.",
                 "Do not copy exact case-specific values, dates, amounts, names, file names, or evidence ids.",
                 "Each item must be a short reusable instruction to append to additional_instruction.",
-                "Focus on evidence grounding, citation precision, condition branching, contradiction handling, and abstention when evidence is insufficient.",
+                "Return drafts that cover different tactic_type values; do not return only citation or evidence-grounding variants.",
+                "Actively explore numeric comparison, missing evidence, condition branching, exception priority, contradiction handling, schema stability, and inconclusive triggers when the cases support them.",
             ],
             "output_schema": [
                 {
                     "instruction": "short reusable draft instruction",
                     "hypothesis": "why it should move outputs closer to human results",
-                    "target_failure_mode": ["wrong_judgement", "unsupported_rationale", "citation_mismatch"],
-                    "tactic_type": ["evidence_grounding", "citation_rule", "condition_branching"],
+                    "target_failure_mode": [
+                        "wrong_judgement",
+                        "unsupported_rationale",
+                        "citation_mismatch",
+                        "insufficient_evidence",
+                        "numeric_mismatch",
+                        "condition_branching_error",
+                    ],
+                    "tactic_type": [
+                        "missing_information_detection",
+                        "numeric_delta_tolerance_check",
+                        "condition_precondition_check",
+                    ],
                     "scope": "procedure_specific",
                 }
             ],
@@ -753,8 +797,6 @@ class HumanReferenceDeepAgentTuningAgent(DeepAgentTuningAgent):
 
         synthesis = context.synthesize_cross_case_tuning()
         final_items = self._fallback_items_from_trials(json.dumps(synthesis, ensure_ascii=False), max_candidates=max_candidates)
-        if not final_items:
-            final_items = draft_items[:max_candidates]
         return {
             "messages": [
                 {
@@ -898,6 +940,8 @@ def build_candidate_agent_prompt(
             "Do not include case-specific values, file names, addresses, dates, amounts, or customer names.",
             "Each candidate must be an atomic instruction suitable for appending to the additional_instruction column.",
             "Prefer generally reusable tactics over fixing one case.",
+            "Diversify tactic_type across candidates instead of returning only citation/evidence-grounding variants.",
+            "Consider missing information detection, numeric delta/tolerance checks, condition preconditions, exception priority, cross-evidence contradiction handling, output schema stabilization, inconclusive triggers, citation granularity, and avoiding over-pruning of relevant evidence.",
             "Return JSON only. No markdown.",
         ],
         "output_schema": [
@@ -905,7 +949,9 @@ def build_candidate_agent_prompt(
                 "instruction": "短い追加指示。400文字以内。",
                 "hypothesis": "この指示で改善する失敗モードと理由。",
                 "target_failure_mode": ["wrong_judgement | unsupported_rationale | citation_mismatch | insufficient_evidence | evidence_conflict | format_violation"],
-                "tactic_type": ["evidence_grounding | citation_rule | condition_branching | abstention_rule | contradiction_handling | schema_enforcement"],
+                "tactic_type": [
+                    "evidence_grounding | citation_rule | condition_branching | abstention_rule | contradiction_handling | schema_enforcement | missing_information_detection | numeric_delta_tolerance_check | condition_precondition_check | exception_priority_ordering | cross_evidence_contradiction_handling | output_schema_stabilization | inconclusive_trigger | citation_granularity_control | avoid_over_pruning_relevant_evidence"
+                ],
                 "scope": "procedure_specific",
                 "risk_labels": {"overfitting": "low|medium|high", "answer_leakage": "low|medium|high"},
             }
@@ -955,6 +1001,8 @@ def build_human_reference_agent_prompt(
             "Use case_specific only for a deliberately non-general candidate.",
             "Use procedure_specific or procedure_family for cross-case candidates.",
             "If a draft regresses another case, explain the risk and avoid promoting it as generalized.",
+            "Keep tactic diversity: do not only produce citation/evidence-grounding variants.",
+            "Explore missing information detection, numeric delta/tolerance checks, condition preconditions, exception priority, cross-evidence contradictions, schema stability, inconclusive triggers, citation granularity, and rules that prevent over-pruning relevant evidence.",
         ],
         "output_schema": [
             {
@@ -966,6 +1014,8 @@ def build_human_reference_agent_prompt(
                     "citation_mismatch",
                     "insufficient_evidence",
                     "condition_branching",
+                    "numeric_mismatch",
+                    "missing_information",
                 ],
                 "tactic_type": [
                     "evidence_grounding",
@@ -973,6 +1023,15 @@ def build_human_reference_agent_prompt(
                     "condition_branching",
                     "abstention_rule",
                     "cross_case_generalization",
+                    "missing_information_detection",
+                    "numeric_delta_tolerance_check",
+                    "condition_precondition_check",
+                    "exception_priority_ordering",
+                    "cross_evidence_contradiction_handling",
+                    "output_schema_stabilization",
+                    "inconclusive_trigger",
+                    "citation_granularity_control",
+                    "avoid_over_pruning_relevant_evidence",
                 ],
                 "scope": "procedure_specific",
                 "source_trial_ids": ["trial id returned by evaluate_draft_instruction"],
@@ -1035,6 +1094,16 @@ def _strip_code_fence(text: str) -> str:
     if lines and lines[-1].strip().startswith("```"):
         lines = lines[:-1]
     return "\n".join(lines).strip()
+
+
+def _trial_replicate_stable(trial: JsonDict) -> bool:
+    summary = trial.get("summary")
+    if not isinstance(summary, dict):
+        return False
+    replicate_summary = summary.get("replicate_summary")
+    if replicate_summary is None:
+        return True
+    return isinstance(replicate_summary, dict) and bool(replicate_summary.get("stable"))
 
 
 def _extract_agent_text(result: object) -> str:

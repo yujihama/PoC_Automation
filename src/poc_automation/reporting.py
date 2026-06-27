@@ -103,6 +103,7 @@ def _fetch_overview(conn) -> dict[str, object]:
           (SELECT COUNT(*) FROM tuning_candidates WHERE status = 'rejected' AND risk_labels_json LIKE '%duplicate_candidate%') AS duplicate_candidate_count,
           (SELECT COUNT(*) FROM experiment_batches) AS experiment_count,
           (SELECT COALESCE(MAX(search_iteration), 0) FROM experiment_batches) AS max_iteration,
+          (SELECT COALESCE(MAX(search_iteration), 0) FROM agent_trial_observations) AS agent_trial_rounds,
           (SELECT COUNT(*) FROM case_runs) AS case_run_count,
           (SELECT COUNT(*) FROM case_runs WHERE status <> 'succeeded') AS failed_case_runs,
           (SELECT COUNT(DISTINCT case_id) FROM case_runs WHERE tuning_id = 'baseline') AS baseline_case_count,
@@ -127,6 +128,7 @@ def _overview_lines(
     skipped_duplicates = _optional_number(run_report, "skipped_duplicate_candidates")
     needs_more_validation = _optional_number(run_report, "needs_more_validation_candidates")
     baseline_case_count = _optional_number(run_report, "baseline_case_count")
+    requested_iterations = _optional_number(run_report, "iterations")
     input_tokens = int(usage["input_tokens"] or 0) if usage else 0
     output_tokens = int(usage["output_tokens"] or 0) if usage else 0
     total_tokens = int(usage["total_tokens"] or 0) if usage else 0
@@ -143,7 +145,9 @@ def _overview_lines(
             f"- model: `{_md(run_report.get('model', 'unknown') if run_report else 'unknown')}`",
             f"- candidate_provider: `{_md(run_report.get('candidate_provider', 'unknown') if run_report else 'unknown')}`",
             f"- candidate_model: `{_md(run_report.get('candidate_model', 'unknown') if run_report else 'unknown')}`",
-            f"- max_iteration: `{int(overview.get('max_iteration') or 0)}`",
+            f"- outer_requested_iterations: `{requested_iterations}`",
+            f"- formal_evaluation_iterations: `{int(overview.get('max_iteration') or 0)}`",
+            f"- agent_trial_rounds: `{int(overview.get('agent_trial_rounds') or 0)}`",
             f"- experiments: `{int(overview.get('experiment_count') or 0)}`",
             f"- candidates: `{int(overview.get('candidate_count') or 0)}` "
             f"(non-baseline `{int(overview.get('non_baseline_candidates') or 0)}`)",
@@ -154,6 +158,7 @@ def _overview_lines(
             f"- promotions: `{int(overview.get('promotion_count') or 0)}`",
             f"- needs_more_validation: `{int(overview.get('needs_more_validation_count') or 0)}`",
             f"- agent_trial_tool_calls: `{int(overview.get('agent_trial_count') or 0)}`",
+            f"- accepted_candidate_count: `{evaluated}`",
         ]
     )
     if run_report:
@@ -170,6 +175,10 @@ def _overview_lines(
                 f"- human_reference_splits: `{_md(run_report.get('human_reference_splits', []))}`",
                 f"- agent_trial_eval_splits: `{_md(run_report.get('agent_trial_eval_splits', []))}`",
                 f"- per_case_trial_budget: `{_md(run_report.get('per_case_trial_budget', ''))}`",
+                f"- agent_trial_replicates: `{_md(run_report.get('agent_trial_replicates', ''))}`",
+                f"- agent_trial_replicate_min_delta_mean: `{_md(run_report.get('agent_trial_replicate_min_delta_mean', ''))}`",
+                f"- agent_trial_replicate_min_worst_delta: `{_md(run_report.get('agent_trial_replicate_min_worst_delta', ''))}`",
+                f"- agent_trial_replicate_max_regression_count: `{_md(run_report.get('agent_trial_replicate_max_regression_count', ''))}`",
             ]
         )
     lines.extend(
@@ -309,12 +318,13 @@ def _agent_trial_lines(rows) -> list[str]:
     lines.append("")
     lines.extend(
         [
-            "| iter | draft | trial_id | status | cases | mean_total | delta | pos | neg | reg | instruction | hypothesis |",
-            "|---:|---:|---|---:|---|---:|---:|---:|---:|---:|---|---|",
+            "| trial_round | draft | trial_id | status | cases | mean_total | delta | rep | stable | worst_delta | pos | neg | reg | instruction | hypothesis |",
+            "|---:|---:|---|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---|",
         ]
     )
     for row in rows:
         summary = _json_obj(row["summary_json"])
+        replicate_summary = summary.get("replicate_summary") if isinstance(summary.get("replicate_summary"), dict) else {}
         case_ids = _json_list(row["case_ids_json"])
         lines.append(
             "| "
@@ -327,6 +337,9 @@ def _agent_trial_lines(rows) -> list[str]:
                     _md(", ".join(str(item) for item in case_ids)),
                     _fmt(summary.get("total_score_mean")),
                     _fmt(summary.get("delta_mean")),
+                    str(replicate_summary.get("replicate_count", 1)),
+                    _md(str(replicate_summary.get("stable", "n/a"))),
+                    _fmt(replicate_summary.get("worst_case_delta")),
                     str(summary.get("positive_count", "")),
                     str(summary.get("negative_count", "")),
                     str(summary.get("regression_count", "")),
