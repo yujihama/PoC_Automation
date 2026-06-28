@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -42,6 +44,8 @@ class SearchRunReport:
     evaluated_candidates: int
     positive_candidates: int
     promoted_candidates: int
+    search_run_id: str = ""
+    langfuse: dict[str, object] = field(default_factory=dict)
     skipped_duplicate_candidates: int = 0
     needs_more_validation_candidates: int = 0
     baseline_case_count: int = 0
@@ -70,6 +74,7 @@ class SearchOrchestrator:
         evaluator_suite: EvaluatorSuite,
         langfuse: LangfuseReporter | None = None,
         policy: SearchPolicy | None = None,
+        run_metadata: dict[str, object] | None = None,
     ):
         self.dataset = dataset
         self.registry = registry
@@ -79,12 +84,24 @@ class SearchOrchestrator:
         self.evaluator_suite = evaluator_suite
         self.langfuse = langfuse or LangfuseReporter()
         self.policy = policy or SearchPolicy()
+        self.run_metadata = run_metadata or {}
+        self.search_run_id: str | None = None
+        self._langfuse_dataset_run_names: set[str] = set()
         self.materializer = CsvMaterializer()
         self.validator = PatchValidator(max_instruction_chars=self.policy.max_instruction_chars)
         self.generalizer = TuningGeneralizer()
         self.random = random.Random(self.policy.random_seed)
 
     def run(self) -> SearchRunReport:
+        search_run_id = self._ensure_search_run_id()
+        self._langfuse_dataset_run_names = set()
+        self.langfuse.start_search_session(
+            search_run_id=search_run_id,
+            dataset=self.dataset,
+            metadata=self.run_metadata,
+        )
+        dataset_sync = self.langfuse.sync_dataset(self.dataset)
+
         generated_count = 0
         evaluated_count = 0
         positive_count = 0
@@ -130,12 +147,24 @@ class SearchOrchestrator:
             generated_count += len(candidates)
 
             valid_candidates: list[TuningCandidate] = []
+            iteration_duplicate_count = 0
             for candidate in candidates:
                 stored = self._validate_and_store_candidate(candidate, seen_fingerprints=seen_fingerprints)
                 if stored is None:
                     duplicate_count += 1
+                    iteration_duplicate_count += 1
                     continue
                 valid_candidates.append(stored)
+
+            self.langfuse.emit_agent_iteration(
+                search_run_id=search_run_id,
+                search_iteration=iteration,
+                draft_candidates=candidates,
+                accepted_candidates=valid_candidates,
+                duplicate_skipped_count=iteration_duplicate_count,
+                failures=[to_jsonable(failure) for failure in last_failures],
+                metadata=self.run_metadata,
+            )
 
             cheap_cases = self._sample_cases(Split.TRAIN, self.policy.cheap_sample_size)
             scored: list[tuple[TuningCandidate, float, dict[str, object]]] = []
@@ -220,18 +249,29 @@ class SearchOrchestrator:
                 best_case_results = scored[0][2]["case_results"]
                 last_failures = self._failure_summaries(best_case_results) or last_failures
 
-        self.langfuse.flush()
-        return SearchRunReport(
+        report = SearchRunReport(
             iterations=self.policy.iterations,
             generated_candidates=generated_count,
             evaluated_candidates=evaluated_count,
             positive_candidates=positive_count,
             promoted_candidates=promoted_count,
+            search_run_id=search_run_id,
+            langfuse=self._langfuse_report_metadata(
+                search_run_id=search_run_id,
+                dataset_sync=dataset_sync,
+            ),
             skipped_duplicate_candidates=duplicate_count,
             needs_more_validation_candidates=needs_more_validation_count,
             baseline_case_count=baseline_case_count,
             experiment_ids=experiment_ids,
         )
+        self.langfuse.record_search_summary(
+            search_run_id=search_run_id,
+            summary=report,
+            metadata={**self.run_metadata, "dataset_snapshot_id": self.dataset.snapshot_id},
+        )
+        self.langfuse.flush()
+        return report
 
     def _evaluate_baseline_all_splits(self, baseline: TuningCandidate) -> dict[str, dict[str, object]]:
         if not self.policy.baseline_all_splits:
@@ -258,6 +298,46 @@ class SearchOrchestrator:
                 search_iteration=0,
             )
         return results
+
+    def _ensure_search_run_id(self) -> str:
+        if self.search_run_id is None:
+            stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+            self.search_run_id = f"search_{stamp}_{uuid.uuid4().hex[:6]}"
+        return self.search_run_id
+
+    def _langfuse_report_metadata(self, *, search_run_id: str, dataset_sync) -> dict[str, object]:
+        config = self.langfuse.config
+        host = (config.host or "").rstrip("/")
+        project = config.project or ""
+        project_base = f"{host}/project/{project}" if host and project else ""
+        dataset_name = getattr(dataset_sync, "dataset_name", None)
+        return {
+            "enabled": bool(self.langfuse.enabled),
+            "host": config.host,
+            "project": config.project,
+            "session_id": search_run_id,
+            "session_url": f"{project_base}/sessions/{search_run_id}" if project_base else "",
+            "traces_url": f"{project_base}/traces" if project_base else "",
+            "dataset_name": dataset_name,
+            "dataset_url": f"{project_base}/datasets" if project_base else "",
+            "dataset_run_names": sorted(self._langfuse_dataset_run_names),
+        }
+
+    def _langfuse_case_input(self, case: Case, candidate: TuningCandidate) -> dict[str, object]:
+        evidence_summary: object
+        if self.langfuse.config.send_evidence_text:
+            evidence_summary = read_text_artifact(case.evidence_bundle_path, max_chars=12000)
+        else:
+            evidence_summary = {
+                "evidence_bundle_id": case.metadata.get("evidence_bundle_id") or Path(case.evidence_bundle_path).name,
+                "evidence_bundle_path": case.evidence_bundle_path,
+                "send_evidence_text": False,
+            }
+        return {
+            "procedure_text": read_text_artifact(case.procedure_csv_path, max_chars=8000),
+            "evidence_bundle_summary": evidence_summary,
+            "materialized_instruction": candidate.instruction_text,
+        }
 
     def _bind_agent_runtime_context(
         self,
@@ -370,6 +450,7 @@ class SearchOrchestrator:
         split: str,
         search_iteration: int,
     ) -> dict[str, object]:
+        search_run_id = self._ensure_search_run_id()
         experiment_id = self.registry.create_experiment_batch(
             search_iteration=search_iteration,
             dataset_snapshot_id=self.dataset.snapshot_id,
@@ -401,22 +482,44 @@ class SearchOrchestrator:
                 f"{experiment_id}_{case.case_id}_{candidate.tuning_id}.json",
                 result.raw_output or to_jsonable(result.normalized_result),
             )
+            run_type = "baseline" if candidate.tuning_id == "baseline" else "formal_evaluation"
+            trace_input = self._langfuse_case_input(case, candidate)
             trace = self.langfuse.start_trace(
-                name="poc_tuning_run",
+                name="poc.case_run",
                 case_id=case.case_id,
                 tuning_id=candidate.tuning_id,
+                session_id=search_run_id,
+                input=trace_input,
                 metadata={
+                    "search_run_id": search_run_id,
+                    "dataset_name": self.dataset.dataset_id,
                     "experiment_id": experiment_id,
                     "split": split,
+                    "case_id": case.case_id,
+                    "domain": case.metadata.get("domain"),
+                    "procedure_family": case.metadata.get("procedure_family"),
+                    "tuning_id": candidate.tuning_id,
+                    "fingerprint": candidate.labels.get("fingerprint"),
                     "dataset_snapshot_id": self.dataset.snapshot_id,
                     "materialized_csv_hash": csv_hash,
                     "candidate_generator": candidate.generated_by,
                     "candidate_fingerprint": candidate.labels.get("fingerprint"),
+                    "search_iteration": search_iteration,
+                    "run_type": run_type,
+                    "replicate_index": None,
+                    "candidate_status": candidate.status.value,
+                    "promotion_decision": "none",
+                    **self.run_metadata,
                 },
+                tags=(run_type, "search-run"),
             )
             eval_results = case_execution.eval_results
-            self.langfuse.record_output(trace=trace, output=result.normalized_result, candidate=candidate)
-            self.langfuse.record_scores(trace=trace, results=eval_results)
+            self.langfuse.record_output(
+                trace=trace,
+                output=result.normalized_result,
+                candidate=candidate,
+                app_result=result,
+            )
             run_id = self.registry.save_case_run(
                 experiment_id=experiment_id,
                 case_id=case.case_id,
@@ -461,6 +564,32 @@ class SearchOrchestrator:
             elif delta < -self.policy.delta_epsilon:
                 negative_count += 1
                 regression_count += 1
+            case_effect_label = self._effect_label(delta, 1 if delta < -self.policy.delta_epsilon else 0)
+            self.langfuse.record_scores(
+                trace=trace,
+                results=eval_results,
+                extra_scores={
+                    "delta_vs_baseline": delta,
+                    "effect_label": case_effect_label,
+                    "has_regression": delta < -self.policy.delta_epsilon,
+                    "latency_ms": result.latency_ms,
+                    "candidate_status": candidate.status.value,
+                    "promotion_decision": "none",
+                    **(result.cost or {}),
+                },
+            )
+            dataset_run_name = self.langfuse.record_dataset_run_item(
+                search_run_id=search_run_id,
+                dataset=self.dataset,
+                case_id=case.case_id,
+                run_type=run_type,
+                split=split,
+                tuning_id=candidate.tuning_id,
+                trace_id=trace.trace_id,
+                metadata={"experiment_id": experiment_id},
+            )
+            if dataset_run_name:
+                self._langfuse_dataset_run_names.add(dataset_run_name)
             case_results.append(
                 {
                     "case_id": case.case_id,
@@ -1037,6 +1166,36 @@ class HumanReferenceSearchContext:
             f"iteration_{self.iteration:04d}_{trial_id}.json",
             payload,
         )
+        search_run_id = self.orchestrator._ensure_search_run_id()
+        self.orchestrator.langfuse.emit_trial(
+            search_run_id=search_run_id,
+            trial_id=trial_id,
+            search_iteration=self.iteration,
+            draft_index=draft_index,
+            instruction=instruction,
+            hypothesis=hypothesis,
+            case_ids=[case.case_id for case in cases],
+            splits=sorted({case.split.value for case in cases}),
+            summary=summary,
+            case_results=case_results,
+            status="succeeded",
+            metadata=self.orchestrator.run_metadata,
+        )
+        for run in replicate_runs:
+            replicate_index = int(run.get("replicate_index", 1) or 1)
+            if replicate_index <= 1:
+                continue
+            run_summary = run.get("summary", {})
+            run_case_results = run.get("case_results", [])
+            self.orchestrator.langfuse.emit_replicate_run(
+                search_run_id=search_run_id,
+                trial_id=trial_id,
+                tuning_id=candidate.tuning_id,
+                replicate_index=replicate_index,
+                summary=run_summary if isinstance(run_summary, dict) else {},
+                case_results=run_case_results if isinstance(run_case_results, list) else [],
+                metadata=self.orchestrator.run_metadata,
+            )
         return payload
 
     def _evaluate_trial_candidate_once(

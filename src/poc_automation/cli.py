@@ -73,6 +73,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_run.add_argument("--report-out", default=None, help="write the full Markdown report here")
     p_run.add_argument("--no-report", action="store_true", help="skip the automatic full Markdown report")
+    p_run.add_argument("--langfuse-enabled", action="store_true", help="send traces, scores, and session data to Langfuse")
+    p_run.add_argument(
+        "--langfuse-dataset-mode",
+        choices=["local", "hosted"],
+        default=None,
+        help="use hosted mode to sync dataset items and create Dataset Run links",
+    )
+
+    p_langfuse = sub.add_parser("langfuse", help="manage Langfuse UI integration")
+    langfuse_sub = p_langfuse.add_subparsers(dest="langfuse_command", required=True)
+    p_lf_sync = langfuse_sub.add_parser("sync-dataset", help="sync a PoC dataset snapshot to Langfuse Dataset")
+    p_lf_sync.add_argument("--dataset", required=True)
+    langfuse_sub.add_parser("init-score-configs", help="create required Langfuse score configs")
 
     p_report = sub.add_parser("export-report", help="export markdown report from registry")
     p_report.add_argument("--db", required=True)
@@ -112,6 +125,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "run-search":
         cfg = RuntimeConfig.from_env()
+        if args.langfuse_enabled or args.langfuse_dataset_mode is not None:
+            cfg = replace(
+                cfg,
+                langfuse=replace(
+                    cfg.langfuse,
+                    enabled=args.langfuse_enabled or cfg.langfuse.enabled,
+                    dataset_mode=args.langfuse_dataset_mode or cfg.langfuse.dataset_mode,
+                ),
+            )
         policy = cfg.search_policy
         if args.iterations is not None:
             policy = replace(policy, iterations=args.iterations)
@@ -138,6 +160,7 @@ def main(argv: list[str] | None = None) -> int:
             agent_name=agent_name,
             runner_name=args.runner or cfg.runner,
             policy=policy,
+            cfg=cfg,
         )
         runner_name = args.runner or cfg.runner
         provider = cfg.target_agent.provider if runner_name in {"deepagent", "deepagent-openrouter"} else "local"
@@ -187,6 +210,20 @@ def main(argv: list[str] | None = None) -> int:
                 )
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
+
+    if args.command == "langfuse":
+        cfg = RuntimeConfig.from_env()
+        reporter = LangfuseReporter(cfg.langfuse)
+        if args.langfuse_command == "sync-dataset":
+            dataset = load_dataset_manifest(args.dataset)
+            result = reporter.sync_dataset(dataset)
+            print(json.dumps(to_jsonable(result), ensure_ascii=False, indent=2))
+            return 0 if result.failed_items == 0 else 2
+        if args.langfuse_command == "init-score-configs":
+            result = reporter.initialize_score_configs()
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            failed = result.get("failed", []) if isinstance(result, dict) else []
+            return 0 if not failed else 2
 
     if args.command == "export-report":
         out = export_markdown_report(ExperimentRegistry(args.db), args.out)
@@ -261,11 +298,12 @@ def _run_search(
     agent_name: str,
     runner_name: str,
     policy: SearchPolicy,
+    cfg: RuntimeConfig | None = None,
 ):
     dataset = load_dataset_manifest(dataset_path)
     registry = ExperimentRegistry(db_path)
     artifacts = LocalArtifactStore(artifact_dir)
-    cfg = RuntimeConfig.from_env()
+    cfg = cfg or RuntimeConfig.from_env()
     if runner_name == "mock":
         runner = MockPocAppRunner()
     elif runner_name == "http":
@@ -283,6 +321,34 @@ def _run_search(
         evaluator_suite=EvaluatorSuite(cfg.evaluator_policy),
         langfuse=LangfuseReporter(cfg.langfuse),
         policy=policy,
+        run_metadata={
+            "agent_mode": agent_name,
+            "runner": runner_name,
+            "provider": cfg.target_agent.provider if runner_name in {"deepagent", "deepagent-openrouter"} else "local",
+            "model": cfg.target_agent.model if runner_name in {"deepagent", "deepagent-openrouter"} else runner_name,
+            "candidate_provider": cfg.candidate_agent.provider
+            if agent_name
+            in {
+                "deepagent",
+                "deepagent-openrouter",
+                "openrouter",
+                "deepagent-human-ref",
+                "human-reference",
+                "human-ref",
+            }
+            else "local",
+            "candidate_model": cfg.candidate_agent.model
+            if agent_name
+            in {
+                "deepagent",
+                "deepagent-openrouter",
+                "openrouter",
+                "deepagent-human-ref",
+                "human-reference",
+                "human-ref",
+            }
+            else agent_name,
+        },
     )
     return orchestrator.run()
 

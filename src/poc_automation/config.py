@@ -66,6 +66,20 @@ def _env_float(*names: str, default: float) -> float:
     return default if value is None else float(value)
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value in (None, ""):
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _env_list(name: str) -> tuple[str, ...]:
+    value = os.getenv(name)
+    if value in (None, ""):
+        return ()
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 def _env_json_mapping(*names: str) -> JsonDict | None:
     value = _env_first(*names)
     if value is None:
@@ -493,16 +507,31 @@ class LangfuseConfig:
     host: str | None = None
     public_key: str | None = None
     secret_key: str | None = None
+    project: str | None = None
+    dataset_mode: str = "local"
+    session_by_search_run: bool = True
+    send_raw_output: bool = True
+    send_evidence_text: bool = False
+    send_evidence_files: bool = False
+    tags: tuple[str, ...] = ("poc-tuning",)
 
     @classmethod
     def from_env(cls) -> "LangfuseConfig":
         _load_dotenv()
-        enabled = os.getenv("LANGFUSE_ENABLED", "false").lower() in {"1", "true", "yes"}
+        enabled = _env_bool("POC_LANGFUSE_ENABLED", _env_bool("LANGFUSE_ENABLED", False))
+        tags = _env_list("POC_LANGFUSE_TAGS") or ("poc-tuning", "openrouter", "deepagent")
         return cls(
             enabled=enabled,
             host=os.getenv("LANGFUSE_HOST"),
             public_key=os.getenv("LANGFUSE_PUBLIC_KEY"),
             secret_key=os.getenv("LANGFUSE_SECRET_KEY"),
+            project=os.getenv("LANGFUSE_PROJECT") or os.getenv("POC_LANGFUSE_PROJECT"),
+            dataset_mode=os.getenv("POC_LANGFUSE_DATASET_MODE", "local"),
+            session_by_search_run=_env_bool("POC_LANGFUSE_SESSION_BY_SEARCH_RUN", True),
+            send_raw_output=_env_bool("POC_LANGFUSE_SEND_RAW_OUTPUT", True),
+            send_evidence_text=_env_bool("POC_LANGFUSE_SEND_EVIDENCE_TEXT", False),
+            send_evidence_files=_env_bool("POC_LANGFUSE_SEND_EVIDENCE_FILES", False),
+            tags=tuple(tags),
         )
 
 
